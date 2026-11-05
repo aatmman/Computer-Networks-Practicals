@@ -169,3 +169,4 @@ A: Capture filters (BPF syntax) drop packets before saving; display filters (Wir
 Q: Why doesn't Wireshark show plaintext passwords for Facebook?
 A: Because modern websites use HTTPS/TLS (port 443); payloads are encrypted with AES-GCM or ChaCha20, so only metadata (IP, port, TCP flags, SNI) is visible.
 ================================================================================
+

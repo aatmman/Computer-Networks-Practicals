@@ -98,3 +98,4 @@ int main() {
     cout << "Calculation finished. Server closed connection.\n";
     return 0;
 }
+

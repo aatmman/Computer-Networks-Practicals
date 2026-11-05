@@ -283,3 +283,4 @@ A: `ip addr show` or `ifconfig`.
 A small local area network consisting of 2 to 4 personal computers was successfully set up and configured with static IP addresses. Inter-device connectivity was verified with zero packet loss, and folder/printer resource sharing was demonstrated across all workstations using the SMB protocol.
 TEST STATUS: Verified conceptually and configuration validated against operating system network standards.
 ================================================================================
+

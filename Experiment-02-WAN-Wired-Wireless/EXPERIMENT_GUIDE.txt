@@ -396,3 +396,4 @@ A: By executing the privileged EXEC command `show ip route`.
 A Wide Area Network incorporating wired Ethernet LAN segments and an 802.11 wireless LAN segment was successfully designed, configured, and verified using Cisco Packet Tracer. Full bidirectional end-to-end connectivity was demonstrated across the serial WAN link between wired and wireless hosts.
 TEST STATUS: Verified and validated via Cisco Packet Tracer network topology design and Cisco IOS command simulation.
 ================================================================================
+

@@ -123,3 +123,4 @@ public class CRC {
         scanner.close();
     }
 }
+

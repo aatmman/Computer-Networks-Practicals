@@ -496,3 +496,4 @@ A: Yes. Both transmit standard raw UDP datagrams containing UTF-8 formatted text
 UDP-based Peer-to-Peer and Multiuser chat applications were successfully implemented, compiled, and verified in Java. Stateless client registration, datagram relaying, and concurrent bidirectional messaging were demonstrated.
 TEST STATUS: Tested successfully on macOS (OpenJDK 25.0.4.1, arm64).
 ================================================================================
+

@@ -45,7 +45,7 @@ int main() {
                 cout << "    -> Frame " << i << " : [DROPPED / LOST IN TRANSIT]\n";
                 lossOccurred = true;
                 firstLostInThisPass = i;
-                // In Go-Back-N, receiver discards all subsequent out-of-order frames
+                // In Go-Back-N, receiver window is 1; it discards all subsequent out-of-order frames
                 for (int j = i + 1; j < windowEnd; j++) {
                     cout << "    -> Frame " << j << " : [ARRIVED OUT-OF-ORDER - DISCARDED BY RECEIVER]\n";
                 }
@@ -57,23 +57,22 @@ int main() {
 
         if (lossOccurred) {
             cout << "  [TIMEOUT] Timer expired for unacknowledged Frame " << firstLostInThisPass << "!\n";
-            cout << "  [GO-BACK-N ACTION] Sender rolls window back to Frame " << firstLostInThisPass << ".\n";
+            cout << "  [GO-BACK-N ACTION] Receiver discarded out-of-order frames.\n";
+            cout << "  Sender retransmitting all frames from Frame " << firstLostInThisPass << " to " << windowEnd - 1 << ":\n";
             int framesToRetransmit = windowEnd - firstLostInThisPass;
-            cout << "  Retransmitting " << framesToRetransmit << " frame(s): ";
             for (int r = firstLostInThisPass; r < windowEnd; r++) {
-                cout << r << (r == windowEnd - 1 ? "" : ", ");
+                cout << "    -> Frame " << r << " : [RETRANSMITTED SUCCESSFULLY -> ACK RECEIVED]\n";
             }
-            cout << "\n";
             retransmissions += framesToRetransmit;
 
-            // Reset lostFrame so it successfully delivers upon retransmission
+            // Reset lostFrame so it is not dropped again
             lostFrame = -1;
-            // Roll back sender base to the lost frame
-            base = firstLostInThisPass;
-        } else {
-            cout << "  All frames in window [" << base << " .. " << windowEnd - 1 << "] acknowledged successfully.\n";
-            base = windowEnd; // Slide window forward
         }
+
+        // Window slides forward past all successfully acknowledged frames
+        cout << "  Receiver delivered in-order frames up to " << windowEnd - 1 << ".\n";
+        cout << "  Window slid forward by " << (windowEnd - base) << " position(s). New base = " << windowEnd << "\n";
+        base = windowEnd;
     }
 
     cout << "\n========================================================\n";

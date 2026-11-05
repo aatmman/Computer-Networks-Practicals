@@ -428,3 +428,4 @@ A: The server removes the client's `PrintWriter` from the active set and broadca
 The Java TCP Peer-to-Peer and Multiuser chat programs were successfully compiled and verified. Concurrent bidirectional messaging, client name attribution, and dynamic broadcast capabilities were demonstrated.
 TEST STATUS: Tested successfully on macOS (OpenJDK 25.0.4.1, arm64).
 ================================================================================
+

@@ -48,7 +48,7 @@ public class GoBackN {
                     System.out.println("    -> Frame " + i + " : [DROPPED / LOST IN TRANSIT]");
                     lossOccurred = true;
                     firstLostInThisPass = i;
-                    // In Go-Back-N, receiver discards all subsequent out-of-order frames
+                    // In Go-Back-N, receiver window is 1; it discards all subsequent out-of-order frames
                     for (int j = i + 1; j < windowEnd; j++) {
                         System.out.println("    -> Frame " + j + " : [ARRIVED OUT-OF-ORDER - DISCARDED BY RECEIVER]");
                     }
@@ -60,23 +60,22 @@ public class GoBackN {
 
             if (lossOccurred) {
                 System.out.println("  [TIMEOUT] Timer expired for unacknowledged Frame " + firstLostInThisPass + "!");
-                System.out.println("  [GO-BACK-N ACTION] Sender rolls window back to Frame " + firstLostInThisPass + ".");
+                System.out.println("  [GO-BACK-N ACTION] Receiver discarded out-of-order frames.");
+                System.out.println("  Sender retransmitting all frames from Frame " + firstLostInThisPass + " to " + (windowEnd - 1) + ":");
                 int framesToRetransmit = windowEnd - firstLostInThisPass;
-                System.out.print("  Retransmitting " + framesToRetransmit + " frame(s): ");
                 for (int r = firstLostInThisPass; r < windowEnd; r++) {
-                    System.out.print(r + (r == windowEnd - 1 ? "" : ", "));
+                    System.out.println("    -> Frame " + r + " : [RETRANSMITTED SUCCESSFULLY -> ACK RECEIVED]");
                 }
-                System.out.println();
                 retransmissions += framesToRetransmit;
 
-                // Reset lostFrame so it successfully delivers upon retransmission
+                // Reset lostFrame so it is not dropped again
                 lostFrame = -1;
-                // Roll back sender base to the lost frame
-                base = firstLostInThisPass;
-            } else {
-                System.out.println("  All frames in window [" + base + " .. " + (windowEnd - 1) + "] acknowledged successfully.");
-                base = windowEnd; // Slide window forward
             }
+
+            // Window slides forward past all successfully acknowledged frames
+            System.out.println("  Receiver delivered in-order frames up to " + (windowEnd - 1) + ".");
+            System.out.println("  Window slid forward by " + (windowEnd - base) + " position(s). New base = " + windowEnd);
+            base = windowEnd;
         }
 
         System.out.println("\n========================================================");

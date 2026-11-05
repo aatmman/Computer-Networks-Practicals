@@ -358,3 +358,4 @@ A: `hostname -I` or `ip addr show`.
 The Apache HTTP web server was successfully installed, configured, and secured on Ubuntu Linux. A custom webpage was hosted in the document root, and client-server HTTP communication was confirmed locally and across the local area network.
 TEST STATUS: Verified and documented according to standard Ubuntu Linux / Apache2 system administration standards.
 ================================================================================
+

@@ -391,3 +391,4 @@ A: By extracting bits from index 7 down to 0 using `((c >> i) & 1)`, ensuring ex
 The Java CRC error detection program was successfully implemented, compiled, and tested. The program accurately verified clean frames and detected inverted bit errors.
 TEST STATUS: Tested successfully on macOS (OpenJDK 25.0.4.1, arm64).
 ================================================================================
+

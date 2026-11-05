@@ -55,12 +55,10 @@ Go-Back-N Algorithm:
       - The receiver receives and drops `lostFrame`.
       - For all subsequent frames in this window pass, the receiver discards them as out-of-order.
       - Sender timer expires for `lostFrame`.
-      - Count retransmissions: `retransmissions += (windowEnd - lostFrame)`.
-      - Roll back sender `base` to `lostFrame`.
-      - Mark loss handled (`lostFrame = -1`) so the next pass delivers cleanly.
-   d. If no loss in the window:
-      - All frames acknowledged cumulatively.
-      - Slide window forward: `base = windowEnd`.
+      - Go-Back-N action: Retransmit all frames from `lostFrame` through `windowEnd - 1`: `retransmissions += (windowEnd - lostFrame)`.
+      - All retransmitted frames are received and acknowledged.
+      - Mark loss handled (`lostFrame = -1`).
+   d. Slide window forward past all delivered in-order frames: `base = windowEnd`.
 
 Selective Repeat Algorithm:
 1. Initialize `base = 0`, boolean arrays `acked[totalFrames]` and `receiverBuffered[totalFrames]`.
@@ -153,7 +151,7 @@ public class GoBackN {
                     System.out.println("    -> Frame " + i + " : [DROPPED / LOST IN TRANSIT]");
                     lossOccurred = true;
                     firstLostInThisPass = i;
-                    // In Go-Back-N, receiver discards all subsequent out-of-order frames
+                    // In Go-Back-N, receiver window is 1; it discards all subsequent out-of-order frames
                     for (int j = i + 1; j < windowEnd; j++) {
                         System.out.println("    -> Frame " + j + " : [ARRIVED OUT-OF-ORDER - DISCARDED BY RECEIVER]");
                     }
@@ -165,23 +163,22 @@ public class GoBackN {
 
             if (lossOccurred) {
                 System.out.println("  [TIMEOUT] Timer expired for unacknowledged Frame " + firstLostInThisPass + "!");
-                System.out.println("  [GO-BACK-N ACTION] Sender rolls window back to Frame " + firstLostInThisPass + ".");
+                System.out.println("  [GO-BACK-N ACTION] Receiver discarded out-of-order frames.");
+                System.out.println("  Sender retransmitting all frames from Frame " + firstLostInThisPass + " to " + (windowEnd - 1) + ":");
                 int framesToRetransmit = windowEnd - firstLostInThisPass;
-                System.out.print("  Retransmitting " + framesToRetransmit + " frame(s): ");
                 for (int r = firstLostInThisPass; r < windowEnd; r++) {
-                    System.out.print(r + (r == windowEnd - 1 ? "" : ", "));
+                    System.out.println("    -> Frame " + r + " : [RETRANSMITTED SUCCESSFULLY -> ACK RECEIVED]");
                 }
-                System.out.println();
                 retransmissions += framesToRetransmit;
 
-                // Reset lostFrame so it successfully delivers upon retransmission
+                // Reset lostFrame so it is not dropped again
                 lostFrame = -1;
-                // Roll back sender base to the lost frame
-                base = firstLostInThisPass;
-            } else {
-                System.out.println("  All frames in window [" + base + " .. " + (windowEnd - 1) + "] acknowledged successfully.");
-                base = windowEnd; // Slide window forward
             }
+
+            // Window slides forward past all successfully acknowledged frames
+            System.out.println("  Receiver delivered in-order frames up to " + (windowEnd - 1) + ".");
+            System.out.println("  Window slid forward by " + (windowEnd - base) + " position(s). New base = " + windowEnd);
+            base = windowEnd;
         }
 
         System.out.println("\n========================================================");
@@ -344,22 +341,21 @@ GoBackN Output:
     -> Frame 2 : [DROPPED / LOST IN TRANSIT]
     -> Frame 3 : [ARRIVED OUT-OF-ORDER - DISCARDED BY RECEIVER]
   [TIMEOUT] Timer expired for unacknowledged Frame 2!
-  [GO-BACK-N ACTION] Sender rolls window back to Frame 2.
-  Retransmitting 2 frame(s): 2, 3
+  [GO-BACK-N ACTION] Receiver discarded out-of-order frames.
+  Sender retransmitting all frames from Frame 2 to 3:
+    -> Frame 2 : [RETRANSMITTED SUCCESSFULLY -> ACK RECEIVED]
+    -> Frame 3 : [RETRANSMITTED SUCCESSFULLY -> ACK RECEIVED]
+  Receiver delivered in-order frames up to 3.
+  Window slid forward by 4 position(s). New base = 4
 
-[Pass 2] Active Window: [2 .. 5]
-  Sender transmitting frames 2 through 5...
-    -> Frame 2 : [RECEIVED & CUMULATIVE ACK SENT]
-    -> Frame 3 : [RECEIVED & CUMULATIVE ACK SENT]
+[Pass 2] Active Window: [4 .. 7]
+  Sender transmitting frames 4 through 7...
     -> Frame 4 : [RECEIVED & CUMULATIVE ACK SENT]
     -> Frame 5 : [RECEIVED & CUMULATIVE ACK SENT]
-  All frames in window [2 .. 5] acknowledged successfully.
-
-[Pass 3] Active Window: [6 .. 7]
-  Sender transmitting frames 6 through 7...
     -> Frame 6 : [RECEIVED & CUMULATIVE ACK SENT]
     -> Frame 7 : [RECEIVED & CUMULATIVE ACK SENT]
-  All frames in window [6 .. 7] acknowledged successfully.
+  Receiver delivered in-order frames up to 7.
+  Window slid forward by 4 position(s). New base = 8
 
 SIMULATION COMPLETE
 Total Frames Successfully Transmitted : 8
@@ -477,3 +473,4 @@ A: Stop-and-Wait is a special case of sliding window where the sender window siz
 Go-Back-N and Selective Repeat sliding window protocols were successfully simulated and compared in Java. The output confirmed that Selective Repeat reduces retransmission overhead compared to Go-Back-N when handling dropped frames.
 TEST STATUS: Tested successfully on macOS (OpenJDK 25.0.4.1, arm64).
 ================================================================================
+

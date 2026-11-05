@@ -412,3 +412,4 @@ A: The division at the receiver still yields a non-zero remainder, correctly rej
 The C++ CRC error detection program was successfully implemented, compiled, and tested. The program accurately verified error-free frames with an all-zero remainder and reliably caught corrupted bit patterns.
 TEST STATUS: Tested successfully on macOS (Apple clang C++17, arm64).
 ================================================================================
+
