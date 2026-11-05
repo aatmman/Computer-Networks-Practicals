@@ -1,0 +1,519 @@
+================================================================================
+EXPERIMENT 05: TCP SOCKET PROGRAMMING (HELLO, FILE TRANSFER, CALCULATOR) (JAVA)
+================================================================================
+
+1. EXPERIMENT TITLE AND NUMBER
+--------------------------------------------------------------------------------
+Experiment No. 5: Program using TCP Socket: Say Hello to Each Other, File Transfer, Calculator (Arithmetic).
+
+2. AIM
+--------------------------------------------------------------------------------
+To write, compile, and execute complete Java programs using standard `java.net.ServerSocket` and `java.net.Socket` classes that implement three distinct client-server interactions:
+  (a) Basic bidirectional message exchange ("Say Hello"),
+  (b) Binary-safe chunked file transfer, and
+  (c) Remote arithmetic expression evaluation (Calculator).
+
+3. REQUIREMENTS
+--------------------------------------------------------------------------------
+- Software: Linux, macOS Darwin, or Windows.
+- Java Development Kit: JDK 8 or higher (JDK 17 LTS, JDK 21 LTS, or JDK 25 tested).
+- Networking API: Standard Java Networking (`java.net.ServerSocket`, `java.net.Socket`) and I/O (`java.io.*`).
+- Ports Allocated:
+  * Task (a) Hello: Port 9001
+  * Task (b) File Transfer: Port 9002
+  * Task (c) Calculator: Port 9003
+- Tools: Two terminal windows or two interconnected workstations.
+
+4. LEARNING OBJECTIVES
+--------------------------------------------------------------------------------
+- Master the TCP client-server paradigm in Java using object-oriented networking abstractions:
+  * Server: `ServerSocket serverSocket = new ServerSocket(port)` -> `Socket client = serverSocket.accept()` -> Streams -> `close()`.
+  * Client: `Socket socket = new Socket(host, port)` -> Streams -> `close()`.
+- Understand TCP's reliable, byte-stream, connection-oriented transport guarantees (in-order delivery, error detection, flow control).
+- Implement binary-safe file transmission using `FileInputStream` and `FileOutputStream` chunked buffers without data corruption.
+- Design an application-layer request-response protocol for arithmetic expression parsing.
+- Handle networking exceptions, try-with-resources automatic closing, and graceful socket termination.
+
+5. THEORY AND IMPORTANT TERMINOLOGY
+--------------------------------------------------------------------------------
+- Transmission Control Protocol (TCP): A connection-oriented, reliable transport protocol (Layer 4) providing full-duplex byte-stream delivery between two network endpoints.
+- Socket Abstraction in Java:
+  * `ServerSocket`: Implements a server socket that listens on a specified port and accepts incoming client connection requests via the blocking call `accept()`.
+  * `Socket`: Implements the client socket endpoint (or the connected socket returned by `accept()`), providing input/output streams for data transfer.
+- Java I/O Streams:
+  * Character Streams: `BufferedReader`, `InputStreamReader`, and `PrintWriter` handle text-based messages with explicit character encodings (e.g., `StandardCharsets.UTF_8`).
+  * Byte Streams: `InputStream` and `OutputStream` (`FileInputStream`, `FileOutputStream`) handle raw binary byte streams, essential for binary-safe file transfers.
+- Three-Way Handshake: Automatically performed by the underlying OS TCP stack when `new Socket(host, port)` is invoked.
+- Try-With-Resources: Java construct (`try (Socket s = ...)`) that ensures sockets and streams are closed automatically upon block completion, even if exceptions occur.
+
+6. WORKING PRINCIPLE / ALGORITHM
+--------------------------------------------------------------------------------
+Task (a) - Say Hello:
+1. Server creates `ServerSocket(9001)` and waits in `accept()`.
+2. Client creates `Socket("127.0.0.1", 9001)` and sends greeting string.
+3. Server reads greeting, logs client address, and returns reply greeting.
+4. Client prints server's reply and both close their connections.
+
+Task (b) - File Transfer:
+1. Server creates `ServerSocket(9002)` and waits in `accept()`.
+2. Client connects, opens file via `FileInputStream`.
+3. Client reads raw bytes into buffer (4096 bytes) and writes to socket `OutputStream` until EOF (-1).
+4. Server reads raw bytes from socket `InputStream` and writes directly to `FileOutputStream("received_file.dat")`.
+5. Upon client closure, server read returns -1, closing the destination file cleanly.
+
+Task (c) - Remote Calculator:
+1. Server creates `ServerSocket(9003)` and waits in `accept()`.
+2. Client reads arithmetic expression from user (e.g. `15 * 6`), sends line to server.
+3. Server receives string, tokenizes operands and operator, evaluates result (handling division by zero), and replies with result or error string.
+4. Client prints the computed response.
+
+7. NETWORK FLOW DIAGRAM
+--------------------------------------------------------------------------------
+```
+     Java ServerSocket (Port 9001/9002/9003)             Java Client Socket
+                |                                                |
+     new ServerSocket(PORT)                                      |
+                |                                                |
+             accept() <=========== SYN ================= new Socket(ip, port)
+                |     =========== SYN-ACK ==============>        |
+          (Connected) <=========== ACK ==================   (Connected)
+                |                                                |
+       in.readLine()/read() <=== Data / Byte Stream ===== out.println()/write()
+                |                                                |
+       out.println()/write() ==> Processed Reply / Stream ==> in.readLine()/read()
+                |                                                |
+             close()  <=========== FIN / ACK ===========>     close()
+```
+
+8. COMPLETE SOURCE CODE (JAVA)
+--------------------------------------------------------------------------------
+All source files are located in `Experiment-05-TCP-Socket-Programming/java/`:
+
+--- File 1: HelloServer.java (Port 9001) ---
+```java
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+
+public class HelloServer {
+    public static final int PORT = 9001;
+
+    public static void main(String[] args) {
+        System.out.println("========================================================");
+        System.out.println("  TCP HELLO SERVER LISTENING ON PORT " + PORT + " (JAVA)");
+        System.out.println("========================================================");
+        System.out.println("Waiting for incoming client connection...");
+
+        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+            try (Socket clientSocket = serverSocket.accept()) {
+                System.out.println("Client connected from " + clientSocket.getRemoteSocketAddress());
+
+                BufferedReader in = new BufferedReader(
+                    new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8));
+                PrintWriter out = new PrintWriter(
+                    new OutputStreamWriter(clientSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+
+                String clientMessage = in.readLine();
+                System.out.println("Client says: \"" + clientMessage + "\"");
+
+                String reply = "Hello from TCP Server! Connection verified.";
+                out.println(reply);
+                System.out.println("Sent reply: \"" + reply + "\"");
+            }
+            System.out.println("Server closed connection gracefully.");
+        } catch (IOException e) {
+            System.err.println("Server error: " + e.getMessage());
+        }
+    }
+}
+```
+
+--- File 2: HelloClient.java (Port 9001) ---
+```java
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+
+public class HelloClient {
+    public static final int PORT = 9001;
+
+    public static void main(String[] args) {
+        String serverIP = args.length > 0 ? args[0] : "127.0.0.1";
+
+        System.out.println("Connecting to TCP Hello Server at " + serverIP + ":" + PORT + "...");
+        try (Socket socket = new Socket(serverIP, PORT)) {
+            System.out.println("Connected successfully!");
+
+            BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            PrintWriter out = new PrintWriter(
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
+
+            String message = "Hello from TCP Client! Greetings.";
+            out.println(message);
+            System.out.println("Sent message: \"" + message + "\"");
+
+            String response = in.readLine();
+            System.out.println("Server replied: \"" + response + "\"");
+
+            System.out.println("Client closed socket.");
+        } catch (IOException e) {
+            System.err.println("Client error: " + e.getMessage());
+        }
+    }
+}
+```
+
+--- File 3: FileServer.java (Port 9002) ---
+```java
+import java.io.*;
+import java.net.*;
+
+public class FileServer {
+    public static final int PORT = 9002;
+    public static final int BUFFER_SIZE = 4096;
+
+    public static void main(String[] args) {
+        System.out.println("========================================================");
+        System.out.println("  TCP FILE SERVER LISTENING ON PORT " + PORT + " (JAVA)");
+        System.out.println("========================================================");
+        System.out.println("Waiting for file upload from client...");
+
+        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+            try (Socket clientSocket = serverSocket.accept()) {
+                System.out.println("Client connected from " + clientSocket.getRemoteSocketAddress());
+
+                String outputFileName = "received_file.dat";
+                try (InputStream in = clientSocket.getInputStream();
+                     FileOutputStream fileOut = new FileOutputStream(outputFileName)) {
+
+                    byte[] buffer = new byte[BUFFER_SIZE];
+                    int bytesRead;
+                    long totalBytes = 0;
+
+                    System.out.println("Receiving file stream...");
+                    while ((bytesRead = in.read(buffer)) != -1) {
+                        fileOut.write(buffer, 0, bytesRead);
+                        totalBytes += bytesRead;
+                    }
+
+                    System.out.println("File reception complete! Saved as \"" + outputFileName + "\" (" + totalBytes + " bytes).");
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("File server error: " + e.getMessage());
+        }
+    }
+}
+```
+
+--- File 4: FileClient.java (Port 9002) ---
+```java
+import java.io.*;
+import java.net.*;
+
+public class FileClient {
+    public static final int PORT = 9002;
+    public static final int BUFFER_SIZE = 4096;
+
+    public static void main(String[] args) {
+        String fileName = args.length > 0 ? args[0] : "send_file.txt";
+        String serverIP = args.length > 1 ? args[1] : "127.0.0.1";
+
+        File file = new File(fileName);
+        if (!file.exists()) {
+            try (FileWriter writer = new FileWriter(file)) {
+                writer.write("This is sample text transmitted over a reliable TCP socket in Java.\n");
+                writer.write("TCP stream ensures all bytes are received in order without data loss.\n");
+            } catch (IOException e) {
+                System.err.println("Could not create sample file: " + e.getMessage());
+            }
+            System.out.println("Created default sample file: \"" + fileName + "\"");
+        }
+
+        System.out.println("Connecting to TCP File Server at " + serverIP + ":" + PORT + "...");
+        try (Socket socket = new Socket(serverIP, PORT)) {
+            System.out.println("Connected! Sending file: \"" + fileName + "\" (" + file.length() + " bytes)...");
+
+            try (FileInputStream fileIn = new FileInputStream(file);
+                 OutputStream out = socket.getOutputStream()) {
+
+                byte[] buffer = new byte[BUFFER_SIZE];
+                int bytesRead;
+                long totalSent = 0;
+
+                while ((bytesRead = fileIn.read(buffer)) != -1) {
+                    out.write(buffer, 0, bytesRead);
+                    totalSent += bytesRead;
+                }
+                out.flush();
+                System.out.println("File transfer complete! Successfully sent " + totalSent + " bytes.");
+            }
+        } catch (IOException e) {
+            System.err.println("File client error: " + e.getMessage());
+        }
+    }
+}
+```
+
+--- File 5: CalculatorServer.java (Port 9003) ---
+```java
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+
+public class CalculatorServer {
+    public static final int PORT = 9003;
+
+    public static void main(String[] args) {
+        System.out.println("========================================================");
+        System.out.println("  TCP CALCULATOR SERVER LISTENING ON PORT " + PORT + " (JAVA)");
+        System.out.println("========================================================");
+        System.out.println("Waiting for calculation requests...");
+
+        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+            try (Socket clientSocket = serverSocket.accept()) {
+                System.out.println("Client connected from " + clientSocket.getRemoteSocketAddress());
+
+                BufferedReader in = new BufferedReader(
+                    new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8));
+                PrintWriter out = new PrintWriter(
+                    new OutputStreamWriter(clientSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+
+                String expr = in.readLine();
+                if (expr != null) {
+                    System.out.println("Received arithmetic expression: \"" + expr + "\"");
+
+                    String reply = evaluateExpression(expr.trim());
+                    System.out.println("Computed reply: \"" + reply + "\"");
+                    out.println(reply);
+                }
+            }
+            System.out.println("Calculation finished. Server closed connection.");
+        } catch (IOException e) {
+            System.err.println("Calculator server error: " + e.getMessage());
+        }
+    }
+
+    private static String evaluateExpression(String expr) {
+        String[] tokens = expr.split("\\s+");
+        if (tokens.length != 3) {
+            return "Error: Invalid expression format. Expected '<num1> <op> <num2>' (e.g. 15 + 4)";
+        }
+
+        try {
+            double a = Double.parseDouble(tokens[0]);
+            String op = tokens[1];
+            double b = Double.parseDouble(tokens[2]);
+
+            switch (op) {
+                case "+":
+                    return "Result: " + (a + b);
+                case "-":
+                    return "Result: " + (a - b);
+                case "*":
+                    return "Result: " + (a * b);
+                case "/":
+                    if (b == 0) {
+                        return "Error: Division by zero is undefined.";
+                    }
+                    return "Result: " + (a / b);
+                default:
+                    return "Error: Unsupported operator '" + op + "'. Supported: +, -, *, /";
+            }
+        } catch (NumberFormatException e) {
+            return "Error: Operands must be valid numbers.";
+        }
+    }
+}
+```
+
+--- File 6: CalculatorClient.java (Port 9003) ---
+```java
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.util.Scanner;
+
+public class CalculatorClient {
+    public static final int PORT = 9003;
+
+    public static void main(String[] args) {
+        String serverIP = args.length > 0 ? args[0] : "127.0.0.1";
+
+        System.out.println("Connecting to TCP Calculator Server at " + serverIP + ":" + PORT + "...");
+        try (Socket socket = new Socket(serverIP, PORT);
+             Scanner scanner = new Scanner(System.in)) {
+
+            System.out.println("Connected!");
+
+            BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            PrintWriter out = new PrintWriter(
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
+
+            System.out.print("Enter arithmetic expression (e.g., 25 + 17 or 100 / 4): ");
+            String expr = scanner.hasNextLine() ? scanner.nextLine() : "12 + 7";
+            if (expr.trim().isEmpty()) {
+                expr = "12 + 7";
+            }
+
+            out.println(expr);
+            System.out.println("Sent: \"" + expr + "\"");
+
+            String response = in.readLine();
+            System.out.println("Server Response: " + response);
+
+        } catch (IOException e) {
+            System.err.println("Calculator client error: " + e.getMessage());
+        }
+    }
+}
+```
+
+9. EXPLANATION OF THE CODE
+--------------------------------------------------------------------------------
+- `ServerSocket` vs `Socket`: `ServerSocket` binds to a local port and listens for client connection requests. Calling `accept()` returns a dedicated `Socket` object for communication with the connected client.
+- Try-With-Resources: All network sockets and streams are wrapped in try-with-resources statements, guaranteeing sockets and file streams are automatically closed upon exit without resource leaks.
+- Character Encoding: Standardizes on `StandardCharsets.UTF_8` to ensure text strings containing special characters are correctly encoded and decoded across operating systems.
+- Raw Byte Streaming: `FileServer` and `FileClient` use raw `byte[] buffer = new byte[BUFFER_SIZE]` with `in.read(buffer)` and `fileOut.write(buffer, 0, bytesRead)` to avoid character encodings altering binary data.
+
+10. SETUP AND INSTALLATION INSTRUCTIONS
+--------------------------------------------------------------------------------
+1. Navigate to java directory:
+   `cd Experiment-05-TCP-Socket-Programming/java`
+2. Check Java version: `javac -version` and `java -version`.
+
+11. EXACT COMPILE/RUN COMMANDS
+--------------------------------------------------------------------------------
+Compile all classes:
+`javac HelloServer.java HelloClient.java FileServer.java FileClient.java CalculatorServer.java CalculatorClient.java`
+
+Run Server (Terminal 1) and Client (Terminal 2):
+- Task A (Hello):
+  Terminal 1: `java HelloServer`
+  Terminal 2: `java HelloClient` (or `java HelloClient <server_ip>`)
+- Task B (File Transfer):
+  Terminal 1: `java FileServer`
+  Terminal 2: `java FileClient send_file.txt` (or `java FileClient send_file.txt <server_ip>`)
+- Task C (Calculator):
+  Terminal 1: `java CalculatorServer`
+  Terminal 2: `java CalculatorClient` (or `java CalculatorClient <server_ip>`)
+
+12. EXECUTION ORDER
+--------------------------------------------------------------------------------
+1. Always launch the server application first in Terminal 1.
+2. In Terminal 2, launch the corresponding client application.
+3. Observe real-time communication on both consoles.
+
+13. SAMPLE INPUT AND EXPECTED OUTPUT
+--------------------------------------------------------------------------------
+Task (a) Hello:
+Server:
+```
+TCP HELLO SERVER LISTENING ON PORT 9001 (JAVA)
+Waiting for incoming client connection...
+Client connected from /127.0.0.1:49532
+Client says: "Hello from TCP Client! Greetings."
+Sent reply: "Hello from TCP Server! Connection verified."
+Server closed connection gracefully.
+```
+Client:
+```
+Connecting to TCP Hello Server at 127.0.0.1:9001...
+Connected successfully!
+Sent message: "Hello from TCP Client! Greetings."
+Server replied: "Hello from TCP Server! Connection verified."
+Client closed socket.
+```
+
+Task (c) Calculator:
+Client Console:
+```
+Connecting to TCP Calculator Server at 127.0.0.1:9003...
+Connected!
+Enter arithmetic expression (e.g., 25 + 17 or 100 / 4): 15 * 6
+Sent: "15 * 6"
+Server Response: Result: 90.0
+```
+
+14. HOW TO TEST AND VERIFY THE RESULT
+--------------------------------------------------------------------------------
+- Test cross-platform compatibility: The Java client can connect to the C++ server and vice-versa because both implement standard TCP stream protocols over ports 9001, 9002, and 9003.
+- Verify file transfer: Test with any binary image file (e.g. `test.png`) and verify with `diff` or `md5`:
+  `java FileClient test.png 127.0.0.1` -> check `diff test.png received_file.dat` (returns 0 differences).
+
+15. COMMON ERRORS AND TROUBLESHOOTING
+--------------------------------------------------------------------------------
+1. `java.net.BindException: Address already in use`: Another program or server instance is using port 9001/9002/9003. Wait a few seconds or terminate the process using `lsof -i :9001`.
+2. `java.net.ConnectException: Connection refused`: The server was not started before the client, or the wrong IP address was supplied.
+
+16. MANUAL CODE NOTE / CORRECTION / ENHANCEMENT
+--------------------------------------------------------------------------------
+- The manual only demonstrated simple C++ samples. This parallel Java implementation provides full functional parity with robust error handling, try-with-resources, and command-line arguments for LAN IP specification.
+
+17. VIVA QUESTIONS WITH CONCISE, CORRECT ANSWERS
+--------------------------------------------------------------------------------
+Q1: What Java class is used to create a TCP server?
+A: `java.net.ServerSocket`.
+
+Q2: What Java class is used to create a TCP client?
+A: `java.net.Socket`.
+
+Q3: What does the `serverSocket.accept()` method do?
+A: It blocks until an incoming client connection request arrives, then returns a new `Socket` object for communication with that client.
+
+Q4: Why should binary files be transferred using `InputStream`/`OutputStream` instead of `Reader`/`Writer`?
+A: `Reader`/`Writer` classes interpret byte streams as character text using character encoding mappings (such as UTF-8), which alters and corrupts binary bytes.
+
+Q5: What is the benefit of using try-with-resources in Java networking code?
+A: It automatically closes sockets and streams when execution leaves the block, preventing socket handle leaks.
+
+Q6: How does the Java file server detect that the client has finished uploading?
+A: The `InputStream.read()` method returns `-1` when the client has reached EOF and closed its output stream/socket.
+
+Q7: What does the boolean `true` parameter in `new PrintWriter(out, true)` signify?
+A: It enables auto-flushing, ensuring data is transmitted across the network immediately upon calling `println()`.
+
+Q8: What exception is thrown if the client tries to connect to a host where no server is listening?
+A: `java.net.ConnectException: Connection refused`.
+
+Q9: What is the default backlog queue size for `ServerSocket` if unspecified?
+A: 50 incoming connection requests.
+
+Q10: Can a Java TCP client communicate with a C++ TCP server?
+A: Yes. TCP is a language-agnostic standardized transport protocol; as long as the application-level data format matches, any language can communicate with any other.
+
+Q11: How do you set a socket timeout in Java?
+A: Using `socket.setSoTimeout(int milliseconds)`.
+
+Q12: How do you find the client's IP address on the server side?
+A: Using `clientSocket.getRemoteSocketAddress()` or `clientSocket.getInetAddress().getHostAddress()`.
+
+Q13: What does `flush()` do on an `OutputStream`?
+A: Forces any buffered output bytes to be written out immediately over the underlying network socket.
+
+Q14: What is the OSI layer of TCP sockets?
+A: Sockets reside at the Transport Layer (Layer 4) interface presented to the Application Layer (Layer 7).
+
+Q15: How does TCP guarantee reliability?
+A: Through sequence numbering, acknowledgment packets, retransmission timers, checksum error detection, and sliding window flow control.
+
+18. 30–60 SECOND EXPLANATION FOR THE EXAMINER
+--------------------------------------------------------------------------------
+"In this experiment, I implemented three client-server networking applications in Java using TCP sockets: a greeting exchange on Port 9001, binary file transfer on Port 9002, and an arithmetic calculator on Port 9003. The server utilizes `ServerSocket` to listen on the allocated port and returns a connected `Socket` via `accept()`. The client connects using `new Socket(host, port)`. For text messaging and calculations, I used `BufferedReader` and auto-flushing `PrintWriter` with UTF-8 encoding. For file transfer, I used raw byte streams with `FileInputStream` and `FileOutputStream` to guarantee binary safety without data corruption."
+
+19. QUICK REVISION POINTS
+--------------------------------------------------------------------------------
+- Server: `ServerSocket server = new ServerSocket(port); Socket s = server.accept();`.
+- Client: `Socket s = new Socket(ip, port);`.
+- Text Streams: `BufferedReader`, `PrintWriter(out, true)`.
+- Binary Streams: `InputStream.read(byte[])`, `OutputStream.write(byte[], off, len)`.
+- Ports: 9001 (Hello), 9002 (File Transfer), 9003 (Calculator).
+- Auto-close: Try-with-resources prevents socket resource leaks.
+
+20. RESULT / CONCLUSION
+--------------------------------------------------------------------------------
+The three Java TCP client-server applications were successfully compiled, executed, and verified. Full bidirectional communication, binary file integrity, and remote arithmetic evaluation were demonstrated.
+TEST STATUS: Tested successfully on macOS (OpenJDK 25.0.4.1, arm64).
+================================================================================

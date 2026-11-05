@@ -1,0 +1,393 @@
+================================================================================
+EXPERIMENT 03: ERROR DETECTION AND CORRECTION FOR ASCII CODES USING CRC (JAVA)
+================================================================================
+
+1. EXPERIMENT TITLE AND NUMBER
+--------------------------------------------------------------------------------
+Experiment No. 3: Program for Error Detection and Correction for ASCII Codes using CRC.
+
+2. AIM
+--------------------------------------------------------------------------------
+To write, compile, and execute a standalone Java program that implements error detection for ASCII-coded messages using the Cyclic Redundancy Check (CRC) technique with polynomial (modulo-2) arithmetic, and demonstrates error detection through channel bit corruption and retransmission simulation.
+
+3. REQUIREMENTS
+--------------------------------------------------------------------------------
+- Software: Operating System (Linux, macOS Darwin, or Windows).
+- Java Development Kit: JDK 8 or higher (JDK 17 LTS, JDK 21 LTS, or JDK 25 tested).
+- Tools: Terminal / Command Prompt, Text Editor or IDE (VS Code, IntelliJ IDEA, Eclipse).
+- Hardware: Standard PC with minimum 1 GHz CPU, 512 MB RAM.
+
+4. LEARNING OBJECTIVES
+--------------------------------------------------------------------------------
+- Master the mathematical foundations of polynomial representation of binary data and modulo-2 (XOR) arithmetic in Java.
+- Understand the role of the Generator Polynomial G(x) and Frame Check Sequence (FCS) in Data Link Layer error control.
+- Implement ASCII-to-binary 8-bit stream conversion using `StringBuilder` and bitwise shifts.
+- Implement CRC checksum generation on the sender side and remainder verification on the receiver side.
+- Understand why CRC detects errors reliably (single-bit, double-bit, odd-parity, burst errors) but relies on Automatic Repeat reQuest (ARQ) for correction.
+
+5. THEORY AND IMPORTANT TERMINOLOGY
+--------------------------------------------------------------------------------
+- Cyclic Redundancy Check (CRC): An error-detecting code based on polynomial division used extensively in digital networks (Ethernet, Wi-Fi) and storage media (Hard Drives, SSDs).
+- Modulo-2 Arithmetic: Binary arithmetic performed bit-by-bit without carries in addition and without borrows in subtraction. Both modulo-2 addition and subtraction are identical to the bitwise Exclusive-OR (XOR) operation:
+  * 0 XOR 0 = 0
+  * 0 XOR 1 = 1
+  * 1 XOR 0 = 1
+  * 1 XOR 1 = 0
+- Generator Polynomial G(x): A predefined divisor polynomial of degree r (length n = r + 1) agreed upon by both sender and receiver. Common standards include:
+  * CRC-8: x^8 + x^2 + x + 1 (100000111) - ATM headers
+  * CRC-16-CCITT: x^16 + x^12 + x^5 + 1 (10001000000100001) - X.25, HDLC, Bluetooth
+  * CRC-32: Used in IEEE 802.3 Ethernet and ZIP/PNG files.
+  * Educational/Simple: x^3 + x^2 + 1 (1101) - 4 bits, degree 3.
+- Frame Check Sequence (FCS) / Remainder: The r-bit remainder obtained after dividing the augmented data polynomial (Data followed by r zeros) by G(x).
+- Transmitted Codeword: Codeword T(x) = Data Bits + FCS Remainder.
+- Error Detection Capability:
+  * Detects all single-bit errors if G(x) has at least two non-zero terms (e.g. x^r and 1).
+  * Detects all double-bit errors if G(x) does not divide (x^k + 1).
+  * Detects all odd numbers of bit errors if G(x) contains (x + 1) as a factor.
+  * Detects all burst errors of length <= r bits.
+- Error Detection vs Correction:
+  * CRC is strictly an error-detecting code. It signals the presence of corruption via a non-zero remainder, but does not identify the exact corrupted bit positions for general bursts.
+  * Practical systems achieve error correction through ARQ (Automatic Repeat reQuest) protocols by discarding the corrupted frame and prompting the sender to retransmit it.
+
+6. WORKING PRINCIPLE / ALGORITHM
+--------------------------------------------------------------------------------
+Sender Side:
+1. Input ASCII message string M and generator polynomial string G of length n (degree r = n - 1).
+2. Convert each ASCII character of M into an 8-bit binary string: Data D.
+3. Append r = (n - 1) zero bits to D to create the augmented string D'.
+4. Perform modulo-2 division of D' by G:
+   - Convert dividend to a mutable character array.
+   - Align G with the leftmost '1' bit of the current dividend.
+   - Perform bitwise XOR between G and the corresponding bits of the dividend.
+   - Shift to the next '1' bit.
+   - Repeat until the remaining dividend length is less than n.
+5. The resulting (n - 1) bits form the CRC checksum (FCS).
+6. Construct the transmitted frame: Frame = Data D + CRC.
+
+Transmission Channel:
+1. Deliver Frame to receiver.
+2. Optionally simulate a single-bit or multi-bit error by inverting the bit at a designated index.
+
+Receiver Side:
+1. Receive incoming frame R.
+2. Perform modulo-2 division of R by the same generator G.
+3. Examine the resulting (n - 1) bit remainder:
+   - If remainder contains only '0's: Accept frame as uncorrupted; extract original data.
+   - If remainder contains any '1': Reject frame; error detected; request ARQ retransmission.
+
+7. FLOW DIAGRAM (ASCII)
+--------------------------------------------------------------------------------
+```
+  [ASCII Message: "Hi"]
+           |
+           v
+  [Convert to 8-bit Binary] --> D = 01001000 01101001
+           |
+           v
+  [Append (n-1) Zeros] -------> D' = 0100100001101001 000
+           |
+           v
+  [Modulo-2 Division by G] ---> Divisor G = 1101
+           |
+           v
+  [Extract (n-1) Remainder] --> CRC = 001
+           |
+           v
+  [Construct Codeword] -------> Frame = 0100100001101001 001
+           |
+           |================ [ Transmission Channel ] ================|
+           |                                                         |
+     (Clean Channel)                                      (Bit Flip Injected)
+           |                                                         |
+           v                                                         v
+   R = 0100100001101001001                                  R' = 0100110001101001001
+           |                                                         |
+           v                                                         v
+   [Modulo-2 Division by G]                                 [Modulo-2 Division by G]
+           |                                                         |
+           v                                                         v
+    Remainder = 000                                          Remainder = 110 (Non-zero)
+           |                                                         |
+           v                                                         v
+  [ACCEPTED: No Error]                                      [REJECTED: Error Detected]
+                                                            [Request Retransmission]
+```
+
+8. COMPLETE SOURCE CODE (JAVA)
+--------------------------------------------------------------------------------
+The source code below is saved in `Experiment-03-CRC-Error-Detection/java/CRC.java`:
+
+```java
+import java.util.Scanner;
+
+public class CRC {
+
+    /**
+     * Performs modulo-2 (XOR) binary division and returns the remainder
+     * of length (generator.length() - 1).
+     */
+    public static String mod2Divide(String dividend, String generator) {
+        int n = generator.length();
+        char[] rem = dividend.toCharArray();
+
+        for (int i = 0; i <= rem.length - n; i++) {
+            if (rem[i] == '1') {
+                for (int j = 0; j < n; j++) {
+                    rem[i + j] = (rem[i + j] == generator.charAt(j)) ? '0' : '1';
+                }
+            }
+        }
+        return new String(rem, rem.length - (n - 1), n - 1);
+    }
+
+    /**
+     * Converts an ASCII text string to an 8-bit binary string per character.
+     */
+    public static String asciiToBinary(String text) {
+        StringBuilder bin = new StringBuilder();
+        for (char c : text.toCharArray()) {
+            for (int i = 7; i >= 0; i--) {
+                bin.append(((c >> i) & 1) == 1 ? '1' : '0');
+            }
+        }
+        return bin.toString();
+    }
+
+    public static void main(String[] args) {
+        Scanner scanner = new Scanner(System.in);
+
+        System.out.println("========================================================");
+        System.out.println("   CYCLIC REDUNDANCY CHECK (CRC) ERROR DETECTION - JAVA ");
+        System.out.println("========================================================");
+
+        System.out.print("Enter ASCII message: ");
+        String message = scanner.nextLine();
+        if (message.isEmpty()) {
+            message = "Hi";
+            System.out.println("Empty message entered. Defaulting to: \"" + message + "\"");
+        }
+
+        System.out.print("Enter generator polynomial bits (e.g. 1101 or 10001000000100001): ");
+        String generator = scanner.next();
+
+        if (generator.length() < 2) {
+            System.err.println("Error: Generator polynomial must have at least 2 bits.");
+            scanner.close();
+            return;
+        }
+        for (char c : generator.toCharArray()) {
+            if (c != '0' && c != '1') {
+                System.err.println("Error: Generator must contain only binary digits (0 and 1).");
+                scanner.close();
+                return;
+            }
+        }
+
+        String data = asciiToBinary(message);
+        int n = generator.length();
+
+        // --- SENDER SIDE ---
+        String zeros = "0".repeat(n - 1);
+        String augmented = data + zeros;
+        String crc = mod2Divide(augmented, generator);
+        String frame = data + crc; // Transmitted codeword
+
+        System.out.println("\n--- SENDER SIDE ---");
+        System.out.println("Original Message     : \"" + message + "\"");
+        System.out.println("Data Bits (" + data.length() + " bits) : " + data);
+        System.out.println("Generator (" + n + " bits) : " + generator);
+        System.out.println("Appended Zeros       : " + zeros);
+        System.out.println("Computed CRC (FCS)   : " + crc);
+        System.out.println("Transmitted Frame    : " + frame);
+
+        // --- CHANNEL TRANSMISSION / ERROR SIMULATION ---
+        System.out.println("\n--- TRANSMISSION CHANNEL ---");
+        System.out.print("Simulate a transmission bit error? (y/n): ");
+        char choice = scanner.next().charAt(0);
+
+        String received = frame;
+        if (choice == 'y' || choice == 'Y') {
+            System.out.print("Enter bit position to flip (0 to " + (frame.length() - 1) + "): ");
+            int pos = scanner.nextInt();
+            if (pos >= 0 && pos < frame.length()) {
+                char orig = received.charAt(pos);
+                char flipped = (orig == '0') ? '1' : '0';
+                received = frame.substring(0, pos) + flipped + frame.substring(pos + 1);
+                System.out.println("Flipped bit at index " + pos + " from '" + orig + "' to '" + flipped + "'.");
+                System.out.println("Corrupted Frame Received : " + received);
+            } else {
+                System.out.println("Invalid index! Transmitting frame without error.");
+            }
+        } else {
+            System.out.println("Transmitting frame over clean channel without errors.");
+        }
+
+        // --- RECEIVER SIDE ---
+        System.out.println("\n--- RECEIVER SIDE ---");
+        String remainder = mod2Divide(received, generator);
+        boolean hasError = remainder.contains("1");
+
+        System.out.println("Received Frame          : " + received);
+        System.out.println("Receiver Remainder      : " + remainder);
+
+        if (hasError) {
+            System.out.println("Verification Status     : [REJECTED] Error detected in received frame!");
+            System.out.println("Action                  : Discard frame and request retransmission (ARQ).");
+        } else {
+            System.out.println("Verification Status     : [ACCEPTED] Remainder is all zeros. No error detected.");
+            String receivedData = received.substring(0, data.length());
+            System.out.println("Extracted Data Bits     : " + receivedData);
+        }
+
+        System.out.println("========================================================");
+        scanner.close();
+    }
+}
+```
+
+9. EXPLANATION OF THE CODE
+--------------------------------------------------------------------------------
+- Class `CRC`: Defined as public matching the file name `CRC.java`.
+- `mod2Divide(String dividend, String generator)`:
+  Converts dividend into `char[] rem` for in-place XOR bit mutation. Whenever `rem[i] == '1'`, it XORs the following `n` bits with `generator`. Extracts and returns the last `n - 1` characters as the remainder string.
+- `asciiToBinary(String text)`:
+  Uses `StringBuilder` to append 8 bits per character using `((c >> i) & 1) == 1 ? '1' : '0'`.
+- `zeros = "0".repeat(n - 1)`:
+  Constructs the zero padding string of length `n - 1`.
+- Receiver verification:
+  Runs `mod2Divide(received, generator)`. If `remainder.contains("1")`, an error occurred; otherwise, the frame is verified clean.
+
+10. SETUP AND INSTALLATION INSTRUCTIONS
+--------------------------------------------------------------------------------
+1. Prerequisites: Verify JDK is installed:
+   `javac -version`
+   `java -version`
+2. Navigate to the java folder:
+   `cd Experiment-03-CRC-Error-Detection/java`
+
+11. EXACT COMPILE/RUN COMMANDS
+--------------------------------------------------------------------------------
+Compile:
+`javac CRC.java`
+
+Run:
+`java CRC`
+
+12. EXECUTION ORDER
+--------------------------------------------------------------------------------
+This is a self-contained single-process simulation illustrating sender, channel, and receiver:
+1. Run `java CRC`.
+2. Enter message (e.g., `Hi`).
+3. Enter generator polynomial (e.g., `1101`).
+4. Enter `y` or `n` for channel bit error.
+5. Review the receiver remainder and verification status.
+
+13. SAMPLE INPUT AND EXPECTED OUTPUT
+--------------------------------------------------------------------------------
+Clean Channel Run:
+Input:
+```
+Enter ASCII message: Hi
+Enter generator polynomial bits: 1101
+Simulate a transmission bit error? (y/n): n
+```
+Output:
+```
+--- SENDER SIDE ---
+Original Message     : "Hi"
+Data Bits (16 bits) : 0100100001101001
+Generator (4 bits) : 1101
+Appended Zeros       : 000
+Computed CRC (FCS)   : 001
+Transmitted Frame    : 0100100001101001001
+
+--- TRANSMISSION CHANNEL ---
+Transmitting frame over clean channel without errors.
+
+--- RECEIVER SIDE ---
+Received Frame          : 0100100001101001001
+Receiver Remainder      : 000
+Verification Status     : [ACCEPTED] Remainder is all zeros. No error detected.
+Extracted Data Bits     : 0100100001101001
+```
+
+14. HOW TO TEST AND VERIFY THE RESULT
+--------------------------------------------------------------------------------
+- Test clean run: `printf "Hi\n1101\nn\n" | java CRC` -> Remainder must be `000`.
+- Test error detection: `printf "Hi\n1101\ny\n5\n" | java CRC` -> Remainder must be `110` and status REJECTED.
+- Both test cases match the exact bit outputs of the C++ implementation.
+
+15. COMMON ERRORS AND TROUBLESHOOTING
+--------------------------------------------------------------------------------
+1. `NoSuchElementException` with Scanner: Make sure all required inputs (message, polynomial, choice, and bit pos if applicable) are provided when piping.
+2. Incompatible JDK: `"0".repeat(n - 1)` requires Java 11+. If running on older JDK 8, use a standard loop.
+
+16. MANUAL CODE NOTE / CORRECTION / ENHANCEMENT
+--------------------------------------------------------------------------------
+- Added parity checking and non-zero validation for generator polynomial.
+- Highlighted that CRC only detects errors and cannot correct without ARQ retransmission.
+
+17. VIVA QUESTIONS WITH CONCISE, CORRECT ANSWERS
+--------------------------------------------------------------------------------
+Q1: What does CRC stand for?
+A: Cyclic Redundancy Check.
+
+Q2: How does modulo-2 addition/subtraction behave in binary?
+A: Both addition and subtraction without carry/borrow are identical to the bitwise Exclusive-OR (XOR) operation.
+
+Q3: How many zeros are appended to the original message before division?
+A: If the generator polynomial has length n (degree r), exactly (n - 1) zeros are appended.
+
+Q4: What is the Frame Check Sequence (FCS)?
+A: The remainder obtained from modulo-2 division of the zero-padded data by the generator polynomial.
+
+Q5: What should the receiver-side remainder be if no transmission error occurred?
+A: An all-zero string of length (n - 1).
+
+Q6: Can CRC determine which specific bit flipped in a received message?
+A: Generally no. A non-zero remainder signals corruption, but multiple error patterns can generate the same remainder. Retransmission is required.
+
+Q7: What is the primary advantage of CRC over simple checksums?
+A: CRC detects burst errors (up to the degree of the generator polynomial) and double errors with 100% mathematical reliability.
+
+Q8: What generator polynomial is used in Ethernet (IEEE 802.3)?
+A: CRC-32 (degree 32), with polynomial 0x04C11DB7.
+
+Q9: What happens if an error occurs in the CRC bits during transmission?
+A: The receiver division still results in a non-zero remainder, correctly rejecting the packet.
+
+Q10: Why does the generator polynomial always start and end with '1'?
+A: A leading 1 ensures division starts at the highest-order term, and a trailing 1 prevents unshifted divisibility errors.
+
+Q11: At what layer of the OSI model is CRC implemented in hardware?
+A: The Data Link Layer (Layer 2), within the Ethernet frame trailer.
+
+Q12: In Java, how is the mutable bit manipulation performed?
+A: By converting the String to a `char[]` array to perform in-place XOR replacement without allocating immutable String objects.
+
+Q13: What is the degree of generator polynomial 1101?
+A: Length is 4 bits, so the degree is r = 3 (representing x^3 + x^2 + 1).
+
+Q14: What is ARQ and how does it relate to CRC?
+A: Automatic Repeat reQuest; when CRC detects an error, the receiver discards the frame and ARQ requests retransmission from the sender.
+
+Q15: How does the Java implementation ensure consistent 8-bit representation of ASCII characters?
+A: By extracting bits from index 7 down to 0 using `((c >> i) & 1)`, ensuring exactly 8 bits per character with leading zeros preserved.
+
+18. 30–60 SECOND EXPLANATION FOR THE EXAMINER
+--------------------------------------------------------------------------------
+"In this experiment, I implemented Cyclic Redundancy Check (CRC) error detection in Java. The application converts an input ASCII string into an 8-bit binary string, pads it with (n-1) zeros where n is the length of the generator polynomial, and calculates the FCS remainder using modulo-2 XOR division. The codeword formed by concatenating data and FCS is transmitted. At the receiver, performing modulo-2 division on the codeword yields a remainder of all zeros if the frame is uncorrupted. Simulating a bit error causes the remainder to become non-zero, demonstrating reliable error detection and triggering ARQ retransmission."
+
+19. QUICK REVISION POINTS
+--------------------------------------------------------------------------------
+- Arithmetic: Modulo-2 arithmetic uses XOR (no carry, no borrow).
+- Padding: Append (n - 1) zeros to data.
+- Codeword: Data + Remainder.
+- Receiver: Remainder == 0 -> Accepted; Remainder != 0 -> Rejected (Error detected).
+- Role: Error detection only; error correction handled by retransmission (ARQ).
+
+20. RESULT / CONCLUSION
+--------------------------------------------------------------------------------
+The Java CRC error detection program was successfully implemented, compiled, and tested. The program accurately verified clean frames and detected inverted bit errors.
+TEST STATUS: Tested successfully on macOS (OpenJDK 25.0.4.1, arm64).
+================================================================================

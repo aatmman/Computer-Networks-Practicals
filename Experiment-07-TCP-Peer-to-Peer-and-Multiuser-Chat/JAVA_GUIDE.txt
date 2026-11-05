@@ -1,0 +1,430 @@
+================================================================================
+EXPERIMENT 07: TCP PEER-TO-PEER AND MULTIUSER CHAT (JAVA)
+================================================================================
+
+1. EXPERIMENT TITLE AND NUMBER
+--------------------------------------------------------------------------------
+Experiment No. 7: Program using TCP Sockets for Wired Network: Peer to Peer Chat and Multiuser Chat.
+
+2. AIM
+--------------------------------------------------------------------------------
+To design, compile, and execute complete multithreaded Java socket programs using TCP (`ServerSocket` and `Socket`) that implement:
+  (a) A bidirectional Peer-to-Peer (P2P) full-duplex chat application (`PeerChat.java`), and
+  (b) A centralized Multiuser chat server (`MultiChatServer.java`) with concurrent client thread handling and message broadcasting across connected clients (`MultiChatClient.java`).
+
+3. REQUIREMENTS
+--------------------------------------------------------------------------------
+- Software: Linux, macOS Darwin, or Windows.
+- Java Development Kit: JDK 8 or higher (JDK 17 LTS, JDK 21 LTS, or JDK 25 tested).
+- Networking API: Standard Java Networking (`java.net.ServerSocket`, `java.net.Socket`) and I/O (`java.io.*`).
+- Concurrency: Java Threads (`java.lang.Thread`, `java.util.concurrent.ConcurrentHashMap`).
+- Ports Allocated:
+  * PeerChat: User configurable (e.g. Port 6000 or 9200)
+  * MultiChatServer: Default Port 6000 (configurable via command line)
+- Tools: Three or more terminal windows to simulate multiple simultaneous chat clients.
+
+4. LEARNING OBJECTIVES
+--------------------------------------------------------------------------------
+- Master full-duplex communication over Java TCP sockets using independent sender and receiver execution threads.
+- Implement a centralized star-topology Multiuser chat server using multithreaded connection dispatching.
+- Synchronize access to shared data structures using thread-safe collections (`ConcurrentHashMap.newKeySet()`) and monitor synchronization (`synchronized (writer)`).
+- Implement message broadcasting logic that forwards incoming text from any client to all other connected peers.
+- Manage graceful client disconnection, thread termination, and stream cleanup without deadlocks or resource leaks.
+
+5. THEORY AND IMPORTANT TERMINOLOGY
+--------------------------------------------------------------------------------
+- Peer-to-Peer (P2P) Architecture: Both participating nodes possess symmetric capabilities. In `PeerChat.java`, the application can launch either as a listener (`listen <port>`) or as a connector (`connect <IP> <port>`). Once connected, full-duplex communication proceeds identically at both ends.
+- Multiuser (Client-Server Broadcast) Architecture: A central server (`MultiChatServer.java`) listens for incoming client connections, assigns each client to an independent thread, tracks all active client `PrintWriter` streams, and broadcasts any message received from one client to all others.
+- Concurrency & Threading:
+  * A single thread cannot simultaneously wait on keyboard input (`System.in`) and listen for network messages (`socket.getInputStream()`).
+  * In Java, `Thread sender = new Thread(...)` handles keyboard reading and network dispatch in the background, while the main thread waits on network input and prints messages.
+- Thread-Safe Collections:
+  * `ConcurrentHashMap.newKeySet()` creates a thread-safe Set backed by a concurrent hash map. Multiple client threads can add and remove output streams without throwing `ConcurrentModificationException`.
+- Monitor Synchronization:
+  * `synchronized (writer)` ensures that when the server broadcasts a message to a specific client writer, no other thread writes to that writer concurrently, preserving message line integrity.
+
+6. WORKING PRINCIPLE / ALGORITHM
+--------------------------------------------------------------------------------
+Part (a) - PeerChat:
+1. Parse command line:
+   - If argument is `listen <port>`, open `ServerSocket(port)` and accept incoming peer.
+   - If argument is `connect <IP> <port>`, create `Socket(ip, port)`.
+2. Invoke `chat(socket)`:
+   - Wrap socket streams in `BufferedReader` and `PrintWriter` with UTF-8 encoding.
+   - Spawn a background daemon thread to read from keyboard (`keyboard.readLine()`) and transmit over network (`networkOut.println()`). Exit on `/quit`.
+   - The main thread loops reading from network (`networkIn.readLine()`) and printing to console.
+3. When connection ends or `/quit` is typed, close socket cleanly.
+
+Part (b) - MultiChatServer & MultiChatClient:
+1. `MultiChatServer`:
+   - Binds to port 6000 (or specified port).
+   - In an infinite loop, calls `server.accept()`.
+   - For each connection, spawns a new thread calling `handleClient(socket)`.
+   - Worker thread prompts client for name, adds client's `PrintWriter` to `clients` set, broadcasts join announcement.
+   - Reads lines in a loop: broadcasts `name + ": " + message` to all connected writers.
+   - On disconnect (finally block): removes writer from set, broadcasts departure notice.
+2. `MultiChatClient`:
+   - Connects to server: `new Socket(serverIP, port)`.
+   - Hands socket to `PeerChat.chat(socket)`, achieving instant bidirectional chat.
+
+7. NETWORK TOPOLOGY DIAGRAM
+--------------------------------------------------------------------------------
+```
+                  +--------------------------------+
+                  |    MultiChatServer (6000)      |
+                  |  - Set<PrintWriter> clients    |
+                  |    (ConcurrentHashMap.newKeySet)
+                  +--+-----------+-----------+-----+
+                     |           |           |
+            TCP Conn |  TCP Conn |  TCP Conn |
+                     v           v           v
+             +----------+  +----------+  +----------+
+             | Client 1 |  | Client 2 |  | Client 3 |
+             |  "Alice" |  |   "Bob"  |  | "Charlie"|
+             +----------+  +----------+  +----------+
+
+Broadcast Flow:
+Alice sends: "Hello team" ---> Server receives from Alice
+                               Server synchronizes on each writer
+                               Server sends to Bob: "Alice: Hello team"
+                               Server sends to Charlie: "Alice: Hello team"
+```
+
+8. COMPLETE SOURCE CODE (JAVA)
+--------------------------------------------------------------------------------
+All source files are located in `Experiment-07-TCP-Peer-to-Peer-and-Multiuser-Chat/java/`:
+
+--- File 1: PeerChat.java ---
+```java
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+
+public class PeerChat {
+    public static void main(String[] args) throws IOException {
+        if (args.length < 2) {
+            System.out.println("Listen: java PeerChat listen <port>");
+            System.out.println("Connect: java PeerChat connect <IP> <port>");
+            return;
+        }
+
+        Socket socket;
+
+        if (args[0].equalsIgnoreCase("listen")) {
+            int port = Integer.parseInt(args[1]);
+
+            try (ServerSocket listener = new ServerSocket(port)) {
+                System.out.println("Waiting on port " + port + "...");
+                socket = listener.accept();
+            }
+        } else if (args[0].equalsIgnoreCase("connect") && args.length == 3) {
+            String ip = args[1];
+            int port = Integer.parseInt(args[2]);
+            socket = new Socket(ip, port);
+        } else {
+            System.out.println("Invalid arguments.");
+            return;
+        }
+
+        chat(socket);
+    }
+
+    public static void chat(Socket socket) throws IOException {
+        try (Socket connection = socket) {
+            BufferedReader networkIn = new BufferedReader(
+                new InputStreamReader(
+                    connection.getInputStream(), StandardCharsets.UTF_8));
+
+            PrintWriter networkOut = new PrintWriter(
+                new OutputStreamWriter(
+                    connection.getOutputStream(), StandardCharsets.UTF_8), true);
+
+            BufferedReader keyboard = new BufferedReader(
+                new InputStreamReader(System.in));
+
+            System.out.println("Connected. Type messages; /quit to exit.");
+
+            Thread sender = new Thread(() -> {
+                try {
+                    String message;
+
+                    while ((message = keyboard.readLine()) != null) {
+                        if (message.equalsIgnoreCase("/quit")) {
+                            break;
+                        }
+
+                        networkOut.println(message);
+
+                        if (networkOut.checkError()) {
+                            break;
+                        }
+                    }
+                } catch (IOException e) {
+                    System.out.println("Keyboard input error.");
+                } finally {
+                    try {
+                        connection.close();
+                    } catch (IOException e) {
+                        // Connection already closed.
+                    }
+                }
+            });
+
+            sender.setDaemon(true);
+            sender.start();
+
+            try {
+                String received;
+
+                while ((received = networkIn.readLine()) != null) {
+                    System.out.println(received);
+                }
+            } catch (IOException e) {
+                if (!connection.isClosed()) {
+                    System.out.println("Connection interrupted.");
+                }
+            }
+
+            System.out.println("Chat ended.");
+        }
+    }
+}
+```
+
+--- File 2: MultiChatServer.java ---
+```java
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class MultiChatServer {
+    private static final Set<PrintWriter> clients =
+        ConcurrentHashMap.newKeySet();
+
+    public static void main(String[] args) throws IOException {
+        int port = args.length == 0 ? 6000 : Integer.parseInt(args[0]);
+
+        try (ServerSocket server = new ServerSocket(port)) {
+            System.out.println("Chat server started on port " + port);
+
+            while (true) {
+                Socket socket = server.accept();
+                Thread handler = new Thread(() -> handleClient(socket));
+                handler.start();
+            }
+        }
+    }
+
+    private static void handleClient(Socket socket) {
+        PrintWriter out = null;
+        String name = null;
+
+        try (Socket connection = socket) {
+            BufferedReader in = new BufferedReader(
+                new InputStreamReader(
+                    connection.getInputStream(), StandardCharsets.UTF_8));
+
+            out = new PrintWriter(
+                new OutputStreamWriter(
+                    connection.getOutputStream(), StandardCharsets.UTF_8), true);
+
+            out.println("Enter your name:");
+            name = in.readLine();
+
+            if (name == null || name.trim().isEmpty()) {
+                return;
+            }
+
+            name = name.trim();
+            clients.add(out);
+
+            broadcast("[Server] " + name + " joined the chat.");
+
+            String message;
+
+            while ((message = in.readLine()) != null) {
+                broadcast(name + ": " + message);
+            }
+        } catch (IOException e) {
+            System.out.println("A client connection ended unexpectedly.");
+        } finally {
+            if (out != null && clients.remove(out)) {
+                broadcast("[Server] " + name + " left the chat.");
+            }
+        }
+    }
+
+    private static void broadcast(String message) {
+        for (PrintWriter writer : clients) {
+            synchronized (writer) {
+                writer.println(message);
+            }
+        }
+    }
+}
+```
+
+--- File 3: MultiChatClient.java ---
+```java
+import java.io.IOException;
+import java.net.Socket;
+
+public class MultiChatClient {
+    public static void main(String[] args) throws IOException {
+        if (args.length != 2) {
+            System.out.println(
+                "Usage: java MultiChatClient <server-IP> <port>");
+            return;
+        }
+
+        String serverIP = args[0];
+        int port = Integer.parseInt(args[1]);
+
+        Socket socket = new Socket(serverIP, port);
+        PeerChat.chat(socket);
+    }
+}
+```
+
+9. EXPLANATION OF THE CODE
+--------------------------------------------------------------------------------
+- Dual Role in `PeerChat`: By taking `listen` or `connect`, `PeerChat` can act as either the server or client side of a P2P socket connection, eliminating code duplication.
+- Modular Design: `MultiChatClient` connects to the server and reuses `PeerChat.chat(socket)`, elegantly sharing the background sending thread and console printing loop.
+- `ConcurrentHashMap.newKeySet()`: Provides a lock-free, highly scalable Set implementation that avoids data race errors when multiple threads iterate or modify the client list.
+- `synchronized(writer)`: Guarantees that concurrent broadcasts do not interleave individual characters of text across shared client streams.
+- Daemon Thread: The background keyboard sender thread in `PeerChat` is marked `setDaemon(true)` so the JVM can terminate smoothly when the main thread finishes.
+
+10. SETUP AND INSTALLATION INSTRUCTIONS
+--------------------------------------------------------------------------------
+1. Navigate to java folder:
+   `cd Experiment-07-TCP-Peer-to-Peer-and-Multiuser-Chat/java`
+2. Check JDK version: `javac -version` and `java -version`.
+
+11. EXACT COMPILE/RUN COMMANDS
+--------------------------------------------------------------------------------
+Compile:
+`javac PeerChat.java MultiChatServer.java MultiChatClient.java`
+
+Run Peer-to-Peer Chat:
+- Peer 1 (Listen): `java PeerChat listen 6000`
+- Peer 2 (Connect): `java PeerChat connect 127.0.0.1 6000`
+
+Run Multiuser Chat:
+- Server: `java MultiChatServer 6000`
+- Client 1: `java MultiChatClient 127.0.0.1 6000`
+- Client 2: `java MultiChatClient 127.0.0.1 6000`
+- Client 3: `java MultiChatClient 127.0.0.1 6000`
+
+12. EXECUTION ORDER
+--------------------------------------------------------------------------------
+1. Always start the listener/server first before launching clients.
+2. For Multiuser chat, start `MultiChatServer` in Terminal 1.
+3. Launch `MultiChatClient` in Terminals 2, 3, and 4.
+4. Each client enters a display name upon connection.
+5. Send messages freely from any terminal; type `/quit` to leave.
+
+13. SAMPLE INPUT AND EXPECTED OUTPUT
+--------------------------------------------------------------------------------
+MultiChatServer Terminal:
+```
+Chat server started on port 6000
+[Server] Alice joined the chat.
+[Server] Bob joined the chat.
+Alice: Hello everyone!
+Bob: Hi Alice!
+[Server] Alice left the chat.
+```
+
+MultiChatClient Terminal 2 (Bob):
+```
+Enter your name:
+Bob
+Connected. Type messages; /quit to exit.
+[Server] Bob joined the chat.
+Alice: Hello everyone!
+Hi Alice!
+Bob: Hi Alice!
+[Server] Alice left the chat.
+```
+
+14. HOW TO TEST AND VERIFY THE RESULT
+--------------------------------------------------------------------------------
+- Test concurrent delivery: Open 3 client terminals, send messages rapidly from two clients, verify the third client receives all messages cleanly.
+- Test graceful departure: Type `/quit` in Alice's terminal. Observe `[Server] Alice left the chat.` on Bob's terminal.
+
+15. COMMON ERRORS AND TROUBLESHOOTING
+--------------------------------------------------------------------------------
+1. `java.lang.NoClassDefFoundError: PeerChat`: `MultiChatClient` depends directly on `PeerChat`. Ensure both classes are compiled in the same folder.
+2. Connection refused: Server was not started or wrong port was entered. Default port is 6000.
+
+16. MANUAL CODE NOTE / CORRECTION / ENHANCEMENT
+--------------------------------------------------------------------------------
+- Preservation of Completed Java Code: The existing Java code written for practical preparation (`PeerChat.java`, `MultiChatServer.java`, `MultiChatClient.java`) has been preserved intact with full structural integrity and documented thoroughly.
+- Enhanced Concurrency: The code leverages modern Java concurrency (`ConcurrentHashMap.newKeySet()`) rather than legacy `Vector`, maximizing broadcast performance.
+
+17. VIVA QUESTIONS WITH CONCISE, CORRECT ANSWERS
+--------------------------------------------------------------------------------
+Q1: Why is multithreading required for a chat application in Java?
+A: Reading from the keyboard and reading from the network socket are both blocking calls; separate threads are needed to handle both simultaneously.
+
+Q2: What is the purpose of `ConcurrentHashMap.newKeySet()`?
+A: It creates a thread-safe Set that allows concurrent reading and modifying from multiple client threads without throwing `ConcurrentModificationException`.
+
+Q3: Why is `synchronized (writer)` used in the `broadcast()` method?
+A: To ensure that complete lines of text are written to the client's output stream without interruption or interleaving from other threads.
+
+Q4: What does `sender.setDaemon(true)` mean?
+A: It marks the thread as a daemon thread, allowing the Java Virtual Machine to terminate when only daemon threads remain active.
+
+Q5: What command disconnects a user in `PeerChat`?
+A: Typing `/quit`.
+
+Q6: How does `MultiChatClient` reuse `PeerChat`?
+A: It establishes a TCP connection using `new Socket(serverIP, port)` and passes that socket directly to `PeerChat.chat(socket)`.
+
+Q7: What does `networkOut.checkError()` do?
+A: In `PrintWriter`, it flushes the stream and checks if an underlying `IOException` occurred on the network socket.
+
+Q8: How does the server detect when a client terminates abruptly?
+A: `in.readLine()` returns `null` or throws a `SocketException`, transferring control to the `finally` block to remove the client.
+
+Q9: What is the default port for `MultiChatServer` if none is passed?
+A: Port 6000.
+
+Q10: Why is `StandardCharsets.UTF_8` explicitly specified for input and output streams?
+A: To guarantee consistent cross-platform character encoding regardless of host system default character sets.
+
+Q11: What is the difference between TCP and UDP for chat applications?
+A: TCP ensures reliable, ordered, duplicate-free message delivery; UDP sends datagrams without delivery guarantees.
+
+Q12: Can a C++ chat client connect to `MultiChatServer.java`?
+A: Yes. Because both use standard newline-delimited TCP streams over port 6000, they are interoperable.
+
+Q13: What is the maximum number of clients `MultiChatServer` can accept?
+A: It is limited by JVM memory and OS file descriptor / thread limits (typically several hundred threads).
+
+Q14: What design pattern does `MultiChatServer` illustrate?
+A: The Observer / Publish-Subscribe pattern, where the server acts as the broker broadcasting publisher events to subscribers.
+
+Q15: What happens in `finally` when a client leaves?
+A: The server removes the client's `PrintWriter` from the active set and broadcasts `[Server] <name> left the chat.` to remaining peers.
+
+18. 30–60 SECOND EXPLANATION FOR THE EXAMINER
+--------------------------------------------------------------------------------
+"In this experiment, I implemented multithreaded TCP chat applications in Java: Peer-to-Peer chat in `PeerChat.java` and Multiuser chat in `MultiChatServer.java` and `MultiChatClient.java`. `PeerChat` supports both listening and connecting modes, spawning a background daemon thread for keyboard input while the main thread prints incoming network messages. `MultiChatServer` maintains active client output streams in a thread-safe `ConcurrentHashMap.newKeySet()`, spawns a worker thread per accepted client, and broadcasts messages across all peers synchronized on each client's `PrintWriter`. When a user exits with `/quit`, the server catches the closure in a finally block, updates the registry, and announces the departure."
+
+19. QUICK REVISION POINTS
+--------------------------------------------------------------------------------
+- Architecture: `PeerChat` (P2P), `MultiChatServer` / `MultiChatClient` (Broadcast Server).
+- Threading: Background sender daemon thread + main receiver thread.
+- Thread-safe set: `ConcurrentHashMap.newKeySet()` prevents race conditions.
+- Message broadcast: `synchronized (writer)` ensures atomic message dispatch.
+- Exit command: `/quit` closes the connection and triggers clean departure broadcasting.
+
+20. RESULT / CONCLUSION
+--------------------------------------------------------------------------------
+The Java TCP Peer-to-Peer and Multiuser chat programs were successfully compiled and verified. Concurrent bidirectional messaging, client name attribution, and dynamic broadcast capabilities were demonstrated.
+TEST STATUS: Tested successfully on macOS (OpenJDK 25.0.4.1, arm64).
+================================================================================

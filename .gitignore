@@ -1,0 +1,34 @@
+# macOS system files
+.DS_Store
+
+# Compiled Java class files
+*.class
+
+# Compiled C++ binaries and object files
+*.o
+*.out
+*.exe
+crc
+gbn
+sr
+hserver
+hclient
+fserver
+fclient
+calc_server
+calc_client
+udp_recv
+udp_send
+p2p_chat
+multiuser_chat_server
+multiuser_chat_client
+udp_p2p
+udp_multi_server
+udp_multi_client
+
+# Intermediate extraction files
+manual_full_text.txt
+exp*_manual.txt
+temp_scratch*
+received_file.dat
+received_output

@@ -1,0 +1,448 @@
+================================================================================
+EXPERIMENT 06: UDP SOCKETS FILE TRANSFER (C++)
+================================================================================
+
+1. EXPERIMENT TITLE AND NUMBER
+--------------------------------------------------------------------------------
+Experiment No. 6: Program using UDP Sockets to Enable File Transfer between Two Machines.
+
+2. AIM
+--------------------------------------------------------------------------------
+To write, compile, and execute complete C++ programs using UDP datagram sockets (`SOCK_DGRAM`) that enable the transfer of various file types (script, text, audio, and video) between two machines, analyzing chunked packetization, connectionless transmission, pacing delays, and transport reliability trade-offs.
+
+3. REQUIREMENTS
+--------------------------------------------------------------------------------
+- Software: Linux, macOS Darwin, or Windows with POSIX sockets support.
+- Compiler: GCC / Clang C++ Compiler (`g++` or `clang++`) supporting C++11 or higher.
+- Networking API: Standard POSIX Sockets (`<sys/socket.h>`, `<netinet/in.h>`, `<arpa/inet.h>`, `<unistd.h>`).
+- Port Allocated: Port 9100.
+- Sample Files:
+  * Script file (e.g. `test.sh` / `script.py`)
+  * Text file (e.g. `sample.txt`)
+  * Audio file (e.g. `sample.mp3` / `audio.wav`)
+  * Video file (e.g. `sample.mp4`)
+- Tools: Two terminal windows or two interconnected computers.
+
+4. LEARNING OBJECTIVES
+--------------------------------------------------------------------------------
+- Understand the connectionless, best-effort nature of User Datagram Protocol (UDP) at Layer 4.
+- Implement UDP socket life cycle using `socket(AF_INET, SOCK_DGRAM, 0)`, `bind()`, `sendto()`, and `recvfrom()`.
+- Implement binary-safe file fragmentation into fixed-size chunks (e.g., 1024 bytes) and reassembly at the receiver.
+- Address UDP limitations (lack of built-in connection teardown, packet loss, out-of-order delivery, buffer overflows).
+- Implement transmission pacing (`usleep()`) to prevent receiver socket buffer drops on local networks.
+- Compare UDP file transfer performance, overhead, and reliability against TCP from Experiment 5.
+
+5. THEORY AND IMPORTANT TERMINOLOGY
+--------------------------------------------------------------------------------
+- User Datagram Protocol (UDP, RFC 768): A lightweight, connectionless, unreliable transport protocol. Each transmission unit is an independent datagram with minimal header overhead (8 bytes compared to TCP's 20-60 bytes).
+- UDP vs TCP for File Transfer:
+  * TCP provides a guaranteed, in-order byte stream with automatic ACKs, retransmissions, and flow control.
+  * UDP provides no delivery guarantees, no sequencing, and no flow control. If a datagram is dropped by an intermediate router or receiver buffer overrun, it is lost forever unless the application retransmits it.
+- Chunking / Fragmentation: Files larger than the socket buffer must be segmented into chunks (e.g., 1024 bytes) that comfortably fit within the Maximum Transmission Unit (MTU, typically 1500 bytes for Ethernet) to prevent IP-level fragmentation.
+- Signaling End-of-File (EOF): Because UDP has no FIN/ACK connection termination signal, the application must transmit a designated EOF marker (e.g., `<<EOF>>`) or send a packet with length 0 so the receiver knows when transmission has finished.
+- Pacing Delay: Rapidly calling `sendto()` in a tight loop can saturate the operating system's UDP socket buffer (`SO_RCVBUF`), resulting in dropped packets even on localhost. A tiny pacing delay (`usleep(500)` to `usleep(1000)`) gives the receiver time to drain its kernel buffer.
+
+6. WORKING PRINCIPLE / ALGORITHM
+--------------------------------------------------------------------------------
+Receiver (Server):
+1. Create UDP socket: `socket(AF_INET, SOCK_DGRAM, 0)`.
+2. Bind to local port `9100`: `bind()`.
+3. Open output destination file in binary write mode (`ios::binary`).
+4. Loop calling `recvfrom()`:
+   - If incoming datagram matches `<<EOF>>`, break the loop.
+   - Otherwise, write the received raw bytes directly to the file: `outFile.write(buffer, n)`.
+5. Close file and socket; print total bytes and chunks received.
+
+Sender (Client):
+1. Open source file in binary read mode (`ios::binary`).
+2. Create UDP socket: `socket(AF_INET, SOCK_DGRAM, 0)`.
+3. Set destination address (Receiver IP and Port 9100).
+4. Read file in fixed chunks of 1024 bytes.
+5. Send each chunk using `sendto()`.
+6. Insert a small microsecond pacing delay (`usleep(1000)`).
+7. Upon reaching EOF of file, send `<<EOF>>` terminator datagram.
+8. Close file and socket; print total bytes sent.
+
+7. NETWORK FLOW DIAGRAM
+--------------------------------------------------------------------------------
+```
+     UDP File Receiver (Port 9100)                     UDP File Sender
+               |                                               |
+            socket()                                        socket()
+               |                                               |
+            bind()                                             |
+               |                                               |
+           recvfrom()  <=== Datagram 1 (Chunk 1024B) ======== sendto()
+         (Write file)                                          | (usleep)
+           recvfrom()  <=== Datagram 2 (Chunk 1024B) ======== sendto()
+         (Write file)                                          | (usleep)
+               :                                               :
+           recvfrom()  <=== Datagram N (Remaining Bytes) ==== sendto()
+         (Write file)                                          |
+           recvfrom()  <=== Marker "<<EOF>>" ================ sendto()
+               |                                               |
+          close file                                      close file
+            close()                                         close()
+```
+
+8. COMPLETE SOURCE CODE (C++)
+--------------------------------------------------------------------------------
+All source files are located in `Experiment-06-UDP-File-Transfer/cpp/`:
+
+--- File 1: udp_file_receiver.cpp ---
+```cpp
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <cstring>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+using namespace std;
+
+const int PORT = 9100;
+const int CHUNK_SIZE = 1024;
+const char* END_MARKER = "<<EOF>>";
+
+int main(int argc, char* argv[]) {
+    string outputFilename = "received_output";
+    if (argc > 1) {
+        outputFilename = argv[1];
+    }
+
+    int sockFd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockFd < 0) {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    int opt = 1;
+    setsockopt(sockFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    sockaddr_in serverAddr{};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(PORT);
+
+    if (::bind(sockFd, (sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+        perror("Bind failed");
+        close(sockFd);
+        return 1;
+    }
+
+    cout << "========================================================\n";
+    cout << "  UDP FILE RECEIVER LISTENING ON PORT " << PORT << "\n";
+    cout << "========================================================\n";
+    cout << "Output will be saved to: \"" << outputFilename << "\"\n";
+    cout << "Waiting for incoming datagrams...\n";
+
+    ofstream outFile(outputFilename, ios::binary);
+    if (!outFile) {
+        cerr << "Failed to open output file: " << outputFilename << endl;
+        close(sockFd);
+        return 1;
+    }
+
+    char buffer[CHUNK_SIZE];
+    sockaddr_in senderAddr{};
+    socklen_t senderLen = sizeof(senderAddr);
+    long long totalBytesReceived = 0;
+    int chunkCount = 0;
+
+    while (true) {
+        ssize_t n = recvfrom(sockFd, buffer, CHUNK_SIZE, 0,
+                             (sockaddr*)&senderAddr, &senderLen);
+        if (n < 0) {
+            perror("recvfrom failed");
+            break;
+        }
+
+        // Check if this datagram contains the end-of-file marker
+        if (n == (ssize_t)strlen(END_MARKER) &&
+            strncmp(buffer, END_MARKER, n) == 0) {
+            cout << "\n[EOF Marker Received] File transfer complete.\n";
+            break;
+        }
+
+        outFile.write(buffer, n);
+        totalBytesReceived += n;
+        chunkCount++;
+
+        if (chunkCount % 50 == 0) {
+            cout << "." << flush;
+        }
+    }
+
+    char senderIP[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &senderAddr.sin_addr, senderIP, sizeof(senderIP));
+    cout << "Received from " << senderIP << ":" << ntohs(senderAddr.sin_port) << endl;
+    cout << "Total Chunks Received: " << chunkCount << endl;
+    cout << "Total Bytes Saved    : " << totalBytesReceived << " bytes\n";
+
+    outFile.close();
+    close(sockFd);
+    return 0;
+}
+```
+
+--- File 2: udp_file_sender.cpp ---
+```cpp
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <cstring>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+using namespace std;
+
+const int PORT = 9100;
+const int CHUNK_SIZE = 1024;
+const char* END_MARKER = "<<EOF>>";
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        cout << "Usage: ./udp_send <filename> [receiver_ip]\n";
+        cout << "Example: ./udp_send sample.txt 127.0.0.1\n";
+        return 1;
+    }
+
+    string fileName = argv[1];
+    string receiverIP = argc > 2 ? argv[2] : "127.0.0.1";
+
+    ifstream inFile(fileName, ios::binary);
+    if (!inFile) {
+        // Create sample file if it doesn't exist
+        ofstream sample(fileName, ios::binary);
+        sample << "#!/bin/bash\n";
+        sample << "# Sample file transfer via UDP Datagrams\n";
+        sample << "echo 'Hello from transferred UDP script file!'\n";
+        sample.close();
+        inFile.open(fileName, ios::binary);
+        cout << "Created sample file: \"" << fileName << "\"\n";
+    }
+
+    int sockFd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockFd < 0) {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    sockaddr_in receiverAddr{};
+    receiverAddr.sin_family = AF_INET;
+    receiverAddr.sin_port = htons(PORT);
+    if (inet_pton(AF_INET, receiverIP.c_str(), &receiverAddr.sin_addr) <= 0) {
+        cerr << "Invalid receiver IP address: " << receiverIP << endl;
+        close(sockFd);
+        return 1;
+    }
+
+    cout << "========================================================\n";
+    cout << "  UDP FILE SENDER -> " << receiverIP << ":" << PORT << "\n";
+    cout << "========================================================\n";
+    cout << "Sending file: \"" << fileName << "\"...\n";
+
+    char buffer[CHUNK_SIZE];
+    long long totalBytesSent = 0;
+    int chunkCount = 0;
+
+    while (inFile.read(buffer, CHUNK_SIZE) || inFile.gcount() > 0) {
+        streamsize bytesToSend = inFile.gcount();
+        ssize_t sent = sendto(sockFd, buffer, bytesToSend, 0,
+                              (sockaddr*)&receiverAddr, sizeof(receiverAddr));
+        if (sent < 0) {
+            perror("sendto failed");
+            break;
+        }
+
+        totalBytesSent += sent;
+        chunkCount++;
+
+        // Pacing delay (500-1000 microseconds) to mitigate UDP datagram drops in socket buffer
+        usleep(1000);
+
+        if (chunkCount % 50 == 0) {
+            cout << "." << flush;
+        }
+    }
+
+    // Send the EOF terminator datagram multiple times (or with short delays) to ensure delivery
+    for (int k = 0; k < 3; k++) {
+        sendto(sockFd, END_MARKER, strlen(END_MARKER), 0,
+               (sockaddr*)&receiverAddr, sizeof(receiverAddr));
+        usleep(5000);
+    }
+
+    cout << "\nFile transfer finished successfully!\n";
+    cout << "Total Chunks Sent : " << chunkCount << endl;
+    cout << "Total Bytes Sent  : " << totalBytesSent << " bytes\n";
+
+    inFile.close();
+    close(sockFd);
+    return 0;
+}
+```
+
+9. EXPLANATION OF THE CODE
+--------------------------------------------------------------------------------
+- Socket Type `SOCK_DGRAM`: Uses UDP instead of TCP stream sockets (`SOCK_STREAM`). No connection handshake (`connect()` or `accept()`) is needed.
+- `sendto()` and `recvfrom()`:
+  * `sendto()` includes the destination IP and port with each individual datagram packet.
+  * `recvfrom()` extracts the incoming datagram payload and captures the sender's address structure (`senderAddr`).
+- Binary Safety: Files are read and written using `ios::binary`. The code transfers exact bytes without interpreting line feeds (`\r\n` vs `\n`), making it equally capable of transferring scripts (.sh, .py), text files (.txt), audio (.mp3), and video (.mp4).
+- EOF Marker and Retries: Because UDP offers no connection closure notification, the sender transmits `<<EOF>>` to inform the receiver that all chunks have been dispatched. The marker is sent 3 times to provide redundancy in case of packet loss.
+- `usleep(1000)`: Introduces a 1 ms delay between datagrams, allowing the operating system's receive buffer to drain and preventing buffer overrun packet drops.
+
+10. SETUP AND INSTALLATION INSTRUCTIONS
+--------------------------------------------------------------------------------
+1. Navigate to the cpp folder:
+   `cd Experiment-06-UDP-File-Transfer/cpp`
+2. Ensure `g++` is installed.
+
+11. EXACT COMPILE/RUN COMMANDS
+--------------------------------------------------------------------------------
+Compile:
+`g++ -std=c++17 -Wall -Wextra udp_file_receiver.cpp -o udp_recv`
+`g++ -std=c++17 -Wall -Wextra udp_file_sender.cpp -o udp_send`
+
+Run Receiver:
+`./udp_recv <destination_filename>`
+
+Run Sender:
+`./udp_send <source_filename> <receiver_ip>`
+
+12. EXECUTION ORDER
+--------------------------------------------------------------------------------
+1. Start the receiver FIRST in Terminal 1:
+   `./udp_recv received_script.sh`
+2. Start the sender in Terminal 2:
+   `./udp_send test_script.sh 127.0.0.1`
+3. Repeat for other file types:
+   - Text: `./udp_recv rec_doc.txt` and `./udp_send sample.txt 127.0.0.1`
+   - Audio: `./udp_recv rec_audio.mp3` and `./udp_send sample.mp3 127.0.0.1`
+   - Video: `./udp_recv rec_video.mp4` and `./udp_send sample.mp4 127.0.0.1`
+
+13. SAMPLE INPUT AND EXPECTED OUTPUT
+--------------------------------------------------------------------------------
+Terminal 1 (Receiver):
+```
+========================================================
+  UDP FILE RECEIVER LISTENING ON PORT 9100
+========================================================
+Output will be saved to: "received_output.txt"
+Waiting for incoming datagrams...
+
+[EOF Marker Received] File transfer complete.
+Received from 127.0.0.1:65328
+Total Chunks Received: 1
+Total Bytes Saved    : 54 bytes
+```
+
+Terminal 2 (Sender):
+```
+========================================================
+  UDP FILE SENDER -> 127.0.0.1:9100
+========================================================
+Sending file: "test.txt"...
+
+File transfer finished successfully!
+Total Chunks Sent : 1
+Total Bytes Sent  : 54 bytes
+```
+
+14. HOW TO TEST AND VERIFY THE RESULT
+--------------------------------------------------------------------------------
+Compare original and received file integrity:
+`diff -s original_file received_output`
+Or inspect MD5 hash values:
+`md5 original_file received_output` (macOS)
+`md5sum original_file received_output` (Linux)
+Both hashes must match identically.
+
+15. COMMON ERRORS AND TROUBLESHOOTING
+--------------------------------------------------------------------------------
+1. Receiver hangs after sender finishes:
+   Cause: The `<<EOF>>` datagram was dropped by the network.
+   Fix: Our sender sends the marker 3 times with brief delays to ensure at least one reaches the receiver.
+2. Incomplete or corrupted file received:
+   Cause: Sending datagrams too fast without pacing overwhelmed the UDP socket buffer.
+   Fix: Ensure `usleep(1000)` pacing delay is present in the sender loop.
+
+16. MANUAL CODE NOTE / CORRECTION / ENHANCEMENT
+--------------------------------------------------------------------------------
+- Clarification on UDP Reliability: The manual presents a simple UDP file transfer mechanism. It is critical to note that raw UDP does NOT guarantee reliability. If packets drop or arrive out of order, the simple sample code does not retransmit or reorder them.
+- Enhancements added in our code:
+  1. Microsecond pacing delay (`usleep(1000)`) to prevent packet drops in kernel buffers.
+  2. Redundant transmission of the `<<EOF>>` marker (3 iterations) to mitigate EOF loss.
+  3. Dynamic command-line filename and remote IP configuration.
+  4. Note on production reliability: In commercial protocols (such as TFTP or QUIC), UDP reliability is achieved by layering sequence numbers, per-packet ACKs, timeouts, and selective retransmissions.
+
+17. VIVA QUESTIONS WITH CONCISE, CORRECT ANSWERS
+--------------------------------------------------------------------------------
+Q1: What are the main characteristics of UDP?
+A: Connectionless, unreliable, message/datagram-oriented, minimal protocol overhead (8-byte header), no flow or congestion control.
+
+Q2: Why does UDP not require `listen()` and `accept()` system calls?
+A: Because UDP is connectionless; it does not establish or maintain virtual circuits between endpoints.
+
+Q3: Which system calls are used to transmit and receive UDP datagrams in C++?
+A: `sendto()` and `recvfrom()`.
+
+Q4: How does `sendto()` differ from `send()`?
+A: `sendto()` takes explicit destination address and port parameters with every call; `send()` relies on a pre-connected socket.
+
+Q5: What is the UDP header size?
+A: Exactly 8 bytes (Source Port, Destination Port, Length, Checksum — 2 bytes each).
+
+Q6: Why is a pacing delay (`usleep`) helpful in UDP file transfer?
+A: It prevents the sender from overflowing the receiver's socket buffer (`SO_RCVBUF`), which would result in silent packet drops.
+
+Q7: How does this UDP program detect when the file transmission has concluded?
+A: By having the sender transmit a designated EOF control string (`<<EOF>>`).
+
+Q8: What happens if an intermediate chunk is lost during UDP file transfer?
+A: In basic UDP without application-level ACKs, the lost chunk is omitted from the file, resulting in file corruption.
+
+Q9: What real-world protocol uses UDP for file transfer?
+A: Trivial File Transfer Protocol (TFTP, RFC 1350), which implements a simple Stop-and-Wait ACK mechanism over UDP.
+
+Q10: Why can the same program transfer scripts, text, audio, and video files?
+A: Because all files are read and written as raw binary bytes (`ios::binary`) without character encoding interpretation.
+
+Q11: For which application is UDP preferred over TCP?
+A: Real-time streaming (VoIP, video conferencing, online gaming, DNS) where low latency is critical and occasional packet loss is acceptable.
+
+Q12: What is the Maximum Transmission Unit (MTU) of standard Ethernet?
+A: 1500 bytes. Datagram payloads larger than this may be fragmented by the IP layer.
+
+Q13: What does `INADDR_ANY` mean when binding a socket?
+A: It instructs the operating system to bind the socket to all available network interfaces on the host.
+
+Q14: How does QUIC use UDP for reliable transfer?
+A: QUIC runs over UDP at the transport layer, but implements its own encryption, packet sequencing, flow control, and loss recovery in user space.
+
+Q15: What is the maximum possible theoretical size of a single UDP datagram?
+A: 65,507 bytes (65,535 bytes total IP packet limit minus 20 bytes IP header and 8 bytes UDP header).
+
+18. 30–60 SECOND EXPLANATION FOR THE EXAMINER
+--------------------------------------------------------------------------------
+"In this experiment, I implemented file transfer between two machines using UDP sockets on Port 9100 in C++. UDP is a connectionless transport protocol, so no three-way handshake is performed; data is transferred using `sendto()` and `recvfrom()` with explicit IP and port addressing. To prevent kernel receive buffer overflows, the sender breaks the file into 1024-byte binary chunks and paces transmission with a 1 ms sleep delay. An end-of-file marker is transmitted to signal completion. Because files are handled in pure binary mode, the program reliably transfers script, text, audio, and video files."
+
+19. QUICK REVISION POINTS
+--------------------------------------------------------------------------------
+- Protocol: UDP (`SOCK_DGRAM`, Layer 4).
+- Header: 8 bytes (Source Port, Dest Port, Length, Checksum).
+- System calls: `socket()` -> `bind()` -> `recvfrom()` (Receiver); `socket()` -> `sendto()` (Sender).
+- Chunk size: 1024 bytes with `usleep(1000)` pacing delay.
+- EOF handling: Application marker `<<EOF>>` sent to terminate receive loop.
+- Binary safety: `ios::binary` preserves exact binary data for all file extensions.
+
+20. RESULT / CONCLUSION
+--------------------------------------------------------------------------------
+A UDP-based file transfer program was successfully implemented, compiled, and verified in C++. Files including scripts, text, and binary formats were transferred between endpoints and confirmed identical via checksum verification.
+TEST STATUS: Tested successfully on macOS (Apple clang C++17, arm64).
+================================================================================

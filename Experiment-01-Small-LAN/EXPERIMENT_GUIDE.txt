@@ -1,0 +1,285 @@
+================================================================================
+EXPERIMENT 01: SETTING UP A SMALL NETWORK AND CONFIGURING RESOURCE SHARING
+================================================================================
+
+1. EXPERIMENT TITLE AND NUMBER
+--------------------------------------------------------------------------------
+Experiment No. 1: Setting up a Small Network (2PC/4PC) and Configuration for Sharing Resources.
+
+2. AIM
+--------------------------------------------------------------------------------
+To set up a small network of 2 to 4 Personal Computers (PCs) using Ethernet cabling and a switch/hub (or wireless connection), configure static IPv4 addressing, and enable network resource sharing including files, folders, and printers across the connected workstations.
+
+3. REQUIREMENTS
+--------------------------------------------------------------------------------
+Hardware Requirements:
+- 2 to 4 Desktop PCs or Laptops equipped with Network Interface Cards (NICs / Ethernet ports or 802.11 Wi-Fi adapters).
+- 1 Fast Ethernet or Gigabit Ethernet Switch (4/8 ports) or an Ethernet Hub / Wi-Fi Access Point.
+- Category 5e (Cat5e) or Category 6 (Cat6) Unshielded Twisted Pair (UTP) patch cables with RJ-45 connectors (Straight-through for switch connections; crossover if connecting 2 PCs directly without a switch).
+- 1 Network-capable or USB-shared printer (optional, for printer sharing demonstration).
+
+Software Requirements:
+- Operating System: Windows 10/11 or Linux (Ubuntu 22.04 / 24.04 LTS).
+- Network utility tools: Command Prompt / Terminal (`ping`, `ipconfig` / `ip addr`, `netstat`, `traceroute` / `tracert`).
+- Local Administrator privileges on all participating workstations.
+
+4. LEARNING OBJECTIVES
+--------------------------------------------------------------------------------
+- Understand the physical layer and data link layer components of a Local Area Network (cables, NICs, switches, hubs).
+- Distinguish between straight-through and crossover Ethernet cabling standards (T568A vs T568B).
+- Master IPv4 Class C private address allocation, subnet masks (/24), and broadcast boundaries.
+- Configure Windows Workgroup and network sharing profiles (Private vs Public, Network Discovery).
+- Configure and access network file shares using SMB/CIFS protocol (`\\IP\ShareName` or `smb://`).
+- Troubleshoot local link connectivity using ICMP ping and firewall adjustments.
+
+5. THEORY AND IMPORTANT TERMINOLOGY
+--------------------------------------------------------------------------------
+- Local Area Network (LAN): A computer network interconnecting computers within a limited geographical area such as a computer laboratory, office building, or residence.
+- Network Interface Card (NIC): Hardware component connecting a computer to the transmission medium; operates at Physical (Layer 1) and Data Link (Layer 2) with a burned-in 48-bit MAC address.
+- Network Switch vs. Hub:
+  * Hub (Layer 1): Multi-port repeater. Incoming frames on one port are broadcast to all other ports indiscriminately. Operates in a single collision domain and single broadcast domain. High collision risk.
+  * Switch (Layer 2): Intelligent forwarding device. Learns MAC addresses into a CAM (Content Addressable Memory) table and forwards frames directly to the designated destination port. Provides micro-segmentation where each port is an independent collision domain.
+- Ethernet Cabling Standards:
+  * T568A and T568B: EIA/TIA pinout standards for RJ-45 terminated twisted-pair cables.
+  * Straight-Through Cable: Both ends wired to the same standard (T568B to T568B). Connects unlike devices (PC to Switch, Switch to Router).
+  * Crossover Cable: One end T568A, opposite end T568B (pins 1 & 2 swapped with 3 & 6). Connects like devices (PC to PC directly without a switch). Modern NICs support Auto-MDIX to automatically adapt.
+- Subnetting and Private IPv4 Addresses (RFC 1918):
+  * Private address blocks: Class A (10.0.0.0/8), Class B (172.16.0.0/12), Class C (192.168.0.0/16).
+  * In a small LAN, Class C subnet `192.168.1.0/24` is standard. The subnet mask `255.255.255.0` designates the first 24 bits for Network ID and the final 8 bits for Host ID (allowing up to 254 usable host addresses from 192.168.1.1 to 192.168.1.254).
+- Resource Sharing Protocols:
+  * Server Message Block (SMB) / Common Internet File System (CIFS): Application-layer network protocol mainly used in Windows for file sharing, printer sharing, and named pipes.
+  * Network File System (NFS): Standard distributed file system protocol widely used in UNIX/Linux.
+
+6. NETWORK TOPOLOGY DIAGRAM
+--------------------------------------------------------------------------------
+Star Topology with 4 PCs connected through a Central Ethernet Switch:
+
+```
+               +-----------------------------+
+               |   8-Port Fast Ethernet      |
+               |        Switch               |
+               +--+--------+--------+-----+--+
+                  |        |        |     |
+      Port 1      | Port 2 | Port 3 |     | Port 4
+         +--------+        |        |     +---------+
+         |                 |        |               |
+         v                 v        v               v
+  +--------------+  +--------------+  +--------------+  +--------------+
+  |     PC-1     |  |     PC-2     |  |     PC-3     |  |     PC-4     |
+  | 192.168.1.10 |  | 192.168.1.11 |  | 192.168.1.12 |  | 192.168.1.13 |
+  | Subnet: /24  |  | Subnet: /24  |  | Subnet: /24  |  | Subnet: /24  |
+  | Workgroup:   |  | Workgroup:   |  | Workgroup:   |  | Workgroup:   |
+  | WORKGROUP    |  | WORKGROUP    |  | WORKGROUP    |  | WORKGROUP    |
+  +-------+------+  +--------------+  +--------------+  +--------------+
+          |
+          | (USB / Network)
+          v
+    +-----------+
+    |  Shared   |
+    |  Printer  |
+    +-----------+
+```
+
+Direct 2-PC Peer-to-Peer Topology (Using Crossover or Auto-MDIX cable):
+
+```
+  +------------------+    Cat5e/6 UTP Cable    +------------------+
+  |       PC-A       +-------------------------+       PC-B       |
+  |   192.168.1.10   |                         |   192.168.1.11   |
+  |  255.255.255.0   |                         |  255.255.255.0   |
+  +------------------+                         +------------------+
+```
+
+7. ADDRESSING AND CONFIGURATION TABLE
+--------------------------------------------------------------------------------
+Device   Interface   IP Address     Subnet Mask     Default Gateway  Workgroup   Shared Resource
+------------------------------------------------------------------------------------------------
+PC-1     Ethernet    192.168.1.10   255.255.255.0   None (Isolated)  WORKGROUP   Folder: "CN_Share", Printer
+PC-2     Ethernet    192.168.1.11   255.255.255.0   None (Isolated)  WORKGROUP   Client / Shared Docs
+PC-3     Ethernet    192.168.1.12   255.255.255.0   None (Isolated)  WORKGROUP   Client
+PC-4     Ethernet    192.168.1.13   255.255.255.0   None (Isolated)  WORKGROUP   Client
+
+8. STEP-BY-STEP SETUP PROCEDURE
+--------------------------------------------------------------------------------
+Step 1: Physical Interconnection
+1. Position the Ethernet switch on the laboratory desk. Plug in its power supply.
+2. Insert one end of a Cat5e/Cat6 straight-through cable into PC-1's RJ-45 NIC jack and the other end into Port 1 of the switch.
+3. Repeat for PC-2 (Port 2), PC-3 (Port 3), and PC-4 (Port 4).
+4. Verify the link LEDs on the switch and PC NICs glow green, indicating active Layer 1 physical link.
+
+Step 2: Static IP Address Configuration (Windows)
+1. Press `Win + R`, type `ncpa.cpl`, and press Enter (Network Connections).
+2. Right-click on the active "Ethernet" adapter and select "Properties".
+3. Double-click "Internet Protocol Version 4 (TCP/IPv4)".
+4. Select "Use the following IP address":
+   - IP address: `192.168.1.10` (for PC-1)
+   - Subnet mask: `255.255.255.0`
+   - Default gateway: leave blank (isolated laboratory LAN).
+5. Click OK -> OK.
+6. Repeat the process on PC-2 (`192.168.1.11`), PC-3 (`192.168.1.12`), and PC-4 (`192.168.1.13`).
+
+Step 3: Workgroup & Network Discovery Configuration (Windows)
+1. Ensure all PCs belong to the same Workgroup:
+   - Press `Win + Pause/Break` or open `sysdm.cpl` -> Computer Name tab.
+   - Click "Change...". Ensure Workgroup name is set to `WORKGROUP`. Restart if modified.
+2. Enable Network Discovery and File Sharing:
+   - Open Control Panel -> Network and Sharing Center -> Advanced sharing settings.
+   - Under "Private network":
+     * Turn on network discovery.
+     * Turn on file and printer sharing.
+   - Under "All Networks":
+     * Turn off password-protected sharing (for seamless academic lab access) or create a shared lab user account.
+
+Step 4: Creating and Configuring a Shared Folder on PC-1
+1. On PC-1, create a folder on the desktop or drive: `C:\CN_Share`.
+2. Inside `C:\CN_Share`, create a sample text document `lab_notes.txt`.
+3. Right-click `C:\CN_Share` -> Properties -> "Sharing" tab -> click "Advanced Sharing...".
+4. Check "Share this folder". Share name: `CN_Share`.
+5. Click "Permissions":
+   - Select "Everyone".
+   - Check "Read" and "Change" permissions to allow remote collaborators to view and modify files.
+   - Click Apply -> OK -> OK.
+6. Go to "Security" tab -> ensure "Users" or "Everyone" has Read & Execute and Write permissions.
+
+Step 5: Sharing a Printer (Optional)
+1. On PC-1, navigate to Settings -> Devices -> Printers & Scanners.
+2. Select the installed printer -> Manage -> Printer properties.
+3. Select "Sharing" tab -> check "Share this printer" -> assign Share Name: `LabPrinter`.
+
+Step 6: Accessing Resources from PC-2, PC-3, and PC-4
+1. On PC-2, press `Win + R`, type `\\192.168.1.10` and press Enter.
+2. The network share window opens, displaying the shared folder `CN_Share` and `LabPrinter`.
+3. Double-click `CN_Share`, open `lab_notes.txt`, edit its content, and save.
+4. For printer: Right-click `LabPrinter` -> Connect to automatically install drivers over the LAN.
+
+9. VERIFICATION AND TESTING COMMANDS
+--------------------------------------------------------------------------------
+1. Check IP Configuration:
+   Windows:
+   `ipconfig /all`
+   Linux / macOS:
+   `ip addr show` or `ifconfig`
+
+2. Test Physical and Logical Connectivity (ICMP Ping):
+   From PC-2 (192.168.1.11) to PC-1 (192.168.1.10):
+   `ping 192.168.1.10`
+   Expected response: 4 packets transmitted, 4 received, 0% packet loss, round-trip time < 1ms.
+
+3. Test Broadcast Reachability:
+   `ping 192.168.1.255`
+
+4. Inspect the ARP Table (Hardware Address Mapping):
+   `arp -a`
+   Observe the IP-to-MAC mapping of 192.168.1.10.
+
+5. Test Port 445 (SMB) Connectivity:
+   PowerShell: `Test-NetConnection -ComputerName 192.168.1.10 -Port 445`
+   Linux: `nc -zv 192.168.1.10 445`
+
+10. EXPECTED RESULTS / SAMPLE OUTPUT
+--------------------------------------------------------------------------------
+Sample `ping` output from PC-2 to PC-1:
+```cmd
+C:\Users\Student> ping 192.168.1.10
+
+Pinging 192.168.1.10 with 32 bytes of data:
+Reply from 192.168.1.10: bytes=32 time<1ms TTL=128
+Reply from 192.168.1.10: bytes=32 time<1ms TTL=128
+Reply from 192.168.1.10: bytes=32 time<1ms TTL=128
+Reply from 192.168.1.10: bytes=32 time<1ms TTL=128
+
+Ping statistics for 192.168.1.10:
+    Packets: Sent = 4, Received = 4, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 0ms, Maximum = 0ms, Average = 0ms
+```
+
+Sample File Access Output:
+Remote directory contents visible at `\\192.168.1.10\CN_Share`:
+`lab_notes.txt` readable and writeable.
+
+11. COMMON ERRORS AND TROUBLESHOOTING
+--------------------------------------------------------------------------------
+1. Problem: "Request timed out" when pinging PC-1.
+   Cause: Windows Defender Firewall blocks incoming ICMP echo requests by default.
+   Fix: On PC-1, open Windows Defender Firewall with Advanced Security -> Inbound Rules -> enable "File and Printer Sharing (Echo Request - ICMPv4-In)". Or temporarily disable private firewall for testing.
+2. Problem: "Destination host unreachable".
+   Cause: IP addresses are configured on different subnets (e.g., PC-1 is 192.168.1.10 while PC-2 is 192.168.2.11) or cable is disconnected.
+   Fix: Verify physical cable LEDs and ensure subnet masks (255.255.255.0) and network IDs (192.168.1.x) match.
+3. Problem: "Network Path was not found" or "Access Denied" when opening `\\192.168.1.10\CN_Share`.
+   Cause: File and Printer Sharing is disabled, or NTFS folder security permissions do not grant Read/Write access to the connecting user.
+   Fix: Check both "Sharing Permissions" and NTFS "Security Permissions" on PC-1 to ensure "Everyone" or "Authenticated Users" has appropriate rights.
+4. Problem: 2 PCs connected directly without switch do not show link.
+   Cause: Older NIC lacks Auto-MDIX and requires a crossover cable.
+   Fix: Use a standard switch or wire a T568A-to-T568B crossover cable.
+
+12. LAB MANUAL NOTES & REAL-WORLD CONTEXT
+--------------------------------------------------------------------------------
+- Real-world enterprise networks replace manual peer-to-peer workgroup sharing with Microsoft Active Directory (AD) domains, centralized Network Attached Storage (NAS) or Storage Area Networks (SAN), and DHCP servers for dynamic address allocation.
+- In modern zero-trust enterprise architectures, peer-to-peer lateral traffic between workstations is intentionally blocked using Private VLANs (PVLANs) to prevent malware propagation; sharing is routed through secured enterprise cloud drives or central servers.
+
+13. VIVA VOCE QUESTIONS AND CONCISE ANSWERS
+--------------------------------------------------------------------------------
+Q1: What is the key functional difference between a hub and a switch?
+A: A hub broadcasts frames out of all ports causing collisions (single collision domain); a switch inspects MAC addresses and switches frames only to the designated port, dedicating bandwidth per port.
+
+Q2: Why must all PCs in this experiment belong to the same subnet?
+A: Devices on the same subnet communicate directly at Layer 2 via ARP and MAC addresses without needing a Layer 3 default gateway router.
+
+Q3: What does the subnet mask 255.255.255.0 indicate?
+A: It indicates a 24-bit network prefix (/24). The first 3 octets represent the network identity, leaving the 4th octet (8 bits, 254 usable hosts) for device identification.
+
+Q4: What is the purpose of the Address Resolution Protocol (ARP)?
+A: ARP dynamically resolves known Layer 3 IPv4 addresses into corresponding Layer 2 physical MAC addresses on the local network segment.
+
+Q5: When is a crossover Ethernet cable required instead of a straight-through cable?
+A: A crossover cable is used to connect two similar devices directly (PC to PC, Switch to Switch) unless the NICs support Auto-MDIX (automatic medium-dependent interface crossover).
+
+Q6: What protocol does Windows use for network file and printer sharing?
+A: Server Message Block (SMB) / Common Internet File System (CIFS), primarily communicating over TCP port 445.
+
+Q7: What does the ping utility use to verify connectivity?
+A: It uses the Internet Control Message Protocol (ICMP), sending Echo Request (Type 8) messages and waiting for Echo Reply (Type 0) responses.
+
+Q8: What is the function of the Default Gateway setting in TCP/IP configuration?
+A: The default gateway is the local router IP address to which a host forwards packets whose destination IP address lies outside the local subnet.
+
+Q9: What is the broadcast address for the subnet 192.168.1.0/24?
+A: 192.168.1.255. Any frame sent to this IP address is delivered to all active hosts on the subnet.
+
+Q10: What are the three blocks of private IPv4 addresses defined in RFC 1918?
+A: 10.0.0.0/8 (Class A), 172.16.0.0/12 (Class B), and 192.168.0.0/16 (Class C).
+
+Q11: Why might a machine fail to respond to ping even when physical cabling and IP settings are correct?
+A: The local host's firewall (such as Windows Defender Firewall) is configured by default to drop incoming ICMP Echo Request packets.
+
+Q12: What is the difference between Share Permissions and NTFS Security Permissions?
+A: Share permissions restrict access over the network; NTFS permissions apply both locally and over the network. The most restrictive permission always takes precedence.
+
+Q13: What does an IP address starting with 169.254.x.x signify?
+A: Automatic Private IP Addressing (APIPA). It means the host failed to reach a DHCP server and self-assigned an unroutable link-local address.
+
+Q14: What is the maximum segment length for Cat5e/Cat6 UTP cabling in an Ethernet LAN?
+A: 100 meters (approximately 328 feet) before signal attenuation requires a repeater or switch.
+
+Q15: What command displays the active IP configuration on a Linux terminal?
+A: `ip addr show` or `ifconfig`.
+
+14. 30–60 SECOND EXPLANATION FOR THE EXAMINER
+--------------------------------------------------------------------------------
+"In this experiment, I established a physical and logical Local Area Network connecting up to 4 PCs in a star topology using Cat5e straight-through cables and a Fast Ethernet switch. I manually configured static Class C private IPv4 addresses in the 192.168.1.0/24 subnet. Because all machines share the same network prefix and subnet mask 255.255.255.0, they communicate directly via Layer 2 switches using ARP without needing a default gateway router. I verified connectivity using ICMP ping, enabled Network Discovery and File/Printer Sharing, created a shared directory on PC-1 with SMB permissions, and successfully accessed and edited files remotely from PC-2 via UNC path `\\192.168.1.10\CN_Share`."
+
+15. QUICK REVISION POINTS
+--------------------------------------------------------------------------------
+- Topology: Star topology using Ethernet Switch and RJ-45 Cat5e/6 cables.
+- Addressing: Class C private subnet (192.168.1.x, mask 255.255.255.0).
+- Key Windows tool: `ncpa.cpl` for network adapter properties, `\\<IP>\<Share>` for access.
+- Firewall rule: Enable ICMPv4-In Echo Request to allow ping replies.
+- Ports involved: TCP 445 (SMB direct), TCP 139 (NetBIOS session).
+- Layer comparison: Hubs repeat at Layer 1; Switches forward intelligently at Layer 2.
+
+16. RESULT / CONCLUSION
+--------------------------------------------------------------------------------
+A small local area network consisting of 2 to 4 personal computers was successfully set up and configured with static IP addresses. Inter-device connectivity was verified with zero packet loss, and folder/printer resource sharing was demonstrated across all workstations using the SMB protocol.
+TEST STATUS: Verified conceptually and configuration validated against operating system network standards.
+================================================================================

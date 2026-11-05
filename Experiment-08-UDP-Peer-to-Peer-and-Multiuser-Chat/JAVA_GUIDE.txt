@@ -1,0 +1,498 @@
+================================================================================
+EXPERIMENT 08: UDP PEER-TO-PEER AND MULTIUSER CHAT (JAVA)
+================================================================================
+
+1. EXPERIMENT TITLE AND NUMBER
+--------------------------------------------------------------------------------
+Experiment No. 8: Program using UDP Sockets for Wired Network: Peer to Peer Chat and Multiuser Chat.
+
+2. AIM
+--------------------------------------------------------------------------------
+To design, compile, and execute complete multithreaded Java socket programs using connectionless UDP datagrams (`DatagramSocket` and `DatagramPacket`) that implement:
+  (a) A bidirectional Peer-to-Peer (P2P) chat application between two endpoints, and
+  (b) A centralized Multiuser chat server with dynamic client registration (JOIN datagrams) and datagram relay broadcasting across all active clients.
+
+3. REQUIREMENTS
+--------------------------------------------------------------------------------
+- Software: Linux, macOS Darwin, or Windows.
+- Java Development Kit: JDK 8 or higher (JDK 17 LTS, JDK 21 LTS, or JDK 25 tested).
+- Networking API: Standard Java Networking (`java.net.DatagramSocket`, `java.net.DatagramPacket`, `java.net.SocketAddress`, `java.net.InetAddress`).
+- Concurrency: Java Threads (`java.lang.Thread`, `java.util.concurrent.ConcurrentHashMap`).
+- Ports Allocated:
+  * P2P Chat: Ports 9250 and 9251 (swapped local/remote)
+  * Multiuser Server: Port 9300
+- Tools: Three or more terminal windows to simulate multiple simultaneous chat clients.
+
+4. LEARNING OBJECTIVES
+--------------------------------------------------------------------------------
+- Understand the architectural differences between connectionless UDP chat and connection-oriented TCP chat in Java.
+- Implement bidirectional communication over UDP using independent sender and receiver threads.
+- Implement address tracking and client bookkeeping in a connectionless protocol using registration datagrams (`JOIN`).
+- Implement datagram relay and broadcasting logic with `DatagramSocket.send()` across dynamically registered `SocketAddress` endpoints.
+- Manage graceful departure and timeout handling in stateless UDP communications.
+
+5. THEORY AND IMPORTANT TERMINOLOGY
+--------------------------------------------------------------------------------
+- UDP Datagram Characteristics:
+  * Connectionless: No 3-way handshake (`new Socket()`) or connection listener (`ServerSocket.accept()`).
+  * Stateless: The operating system does not track active peers or connection state.
+  * Best-Effort Delivery: Datagrams are transmitted independently; delivery, ordering, and duplicate prevention are not guaranteed.
+- Address Tracking in UDP Multiuser Chat:
+  * Because UDP has no persistent connection table (unlike TCP's socket streams), a UDP multiuser server must explicitly learn and record the IP address and port of every client.
+  * This is accomplished using a registration control datagram: when a client starts, it transmits `JOIN:<username>` to the server's known port (9300). The server records the client's `SocketAddress` (`packet.getSocketAddress()`) into a thread-safe `ConcurrentHashMap`.
+- Datagram Forwarding (Relay):
+  * When any registered client sends a chat message, the server iterates through its `ConcurrentHashMap<SocketAddress, String>` and uses `socket.send()` to relay the message to every other registered address.
+- Full-Duplex P2P UDP Chat:
+  * Each peer binds a `DatagramSocket` to a designated local port (e.g., Peer A on 9250, Peer B on 9251).
+  * Peer A sends datagrams to Peer B's port 9251; Peer B sends datagrams to Peer A's port 9250.
+  * A background daemon thread handles `socket.receive()` while the main thread reads user keyboard input and calls `socket.send()`.
+
+6. WORKING PRINCIPLE / ALGORITHM
+--------------------------------------------------------------------------------
+Part (a) - P2P Chat:
+1. Launch Peer 1: bind local port `9250`, destination target `127.0.0.1:9251`.
+2. Launch Peer 2: bind local port `9251`, destination target `127.0.0.1:9250`.
+3. Each peer spawns a daemon receiver thread executing `socket.receive()` in a loop.
+4. The main thread accepts keyboard input and calls `socket.send()` to dispatch datagrams to the remote port.
+5. Entering `exit` sends a termination datagram and closes the socket.
+
+Part (b) - Multiuser Chat:
+1. Server binds a single `DatagramSocket` to Port 9300.
+2. Server loops calling `socket.receive()` to capture incoming datagrams and client `SocketAddress`:
+   - If payload begins with `JOIN:<username>`, add client's address and name to `ConcurrentHashMap`; broadcast join announcement.
+   - If payload is `exit` or `LEAVE`, remove client from map; broadcast departure announcement.
+   - For all other messages, prepend sender's name (`[Alice]: Message`) and loop through registered addresses, calling `socket.send()` for each client except the sender.
+3. Client:
+   - Takes server IP and port, prompts user for display username.
+   - Dispatches `JOIN:<username>` datagram to server.
+   - Spawns background daemon thread executing `socket.receive()` loop to print broadcast messages.
+   - Main thread reads typed text and sends datagrams to server via `socket.send()`.
+
+7. NETWORK TOPOLOGY DIAGRAM
+--------------------------------------------------------------------------------
+```
+                       +-----------------------------+
+                       |  UDP Multiuser Chat Server  |
+                       |       (Port 9300)           |
+                       |  - ConcurrentHashMap        |
+                       +--+----------+----------+----+
+                          ^          |          |
+            JOIN:Alice    |          |          |
+            & Chat msgs   |  Relay   |  Relay   |
+                          |  send()  |  send()  |
+                          v          v          v
+                   +----------+ +----------+ +----------+
+                   | Client 1 | | Client 2 | | Client 3 |
+                   | "Alice"  | |  "Bob"   | |"Charlie" |
+                   +----------+ +----------+ +----------+
+
+Message Relay:
+Alice (Port 50023) sends: "Hello all" -> Server (Port 9300)
+Server checks client map -> matches Alice
+Server relays "[Alice]: Hello all" -> Bob (Port 50024)
+Server relays "[Alice]: Hello all" -> Charlie (Port 50025)
+```
+
+8. COMPLETE SOURCE CODE (JAVA)
+--------------------------------------------------------------------------------
+All source files are located in `Experiment-08-UDP-Peer-to-Peer-and-Multiuser-Chat/java/`:
+
+--- File 1: UDPP2PChat.java ---
+```java
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.util.Scanner;
+
+public class UDPP2PChat {
+
+    public static void main(String[] args) {
+        if (args.length < 2) {
+            System.out.println("Usage: java UDPP2PChat <localPort> <remotePort> [remoteIP]");
+            System.out.println("Example (Terminal 1): java UDPP2PChat 9250 9251 127.0.0.1");
+            System.out.println("Example (Terminal 2): java UDPP2PChat 9251 9250 127.0.0.1");
+            return;
+        }
+
+        int localPort = Integer.parseInt(args[0]);
+        int remotePort = Integer.parseInt(args[1]);
+        String remoteIP = args.length > 2 ? args[2] : "127.0.0.1";
+
+        System.out.println("========================================================");
+        System.out.println("         UDP PEER-TO-PEER (P2P) CHAT - JAVA             ");
+        System.out.println("========================================================");
+        System.out.println("Bound to local port " + localPort + ".");
+        System.out.println("Target remote peer: " + remoteIP + ":" + remotePort);
+        System.out.println("Type messages and press Enter. Type 'exit' to quit.\n");
+
+        try (DatagramSocket socket = new DatagramSocket(localPort);
+             Scanner scanner = new Scanner(System.in)) {
+
+            InetAddress remoteAddress = InetAddress.getByName(remoteIP);
+
+            // Background receiver thread
+            Thread receiver = new Thread(() -> {
+                byte[] buffer = new byte[1024];
+                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                while (!socket.isClosed()) {
+                    try {
+                        socket.receive(packet);
+                        String msg = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
+                        if (msg.equals("exit")) {
+                            System.out.println("\n[Notice] Peer has left the chat. Press Enter to exit.");
+                            break;
+                        }
+                        System.out.print("\r[Peer " + packet.getAddress().getHostAddress() + ":" + packet.getPort() + "]: "
+                                         + msg + "\n[You]: ");
+                    } catch (IOException e) {
+                        if (!socket.isClosed()) {
+                            System.err.println("Receive error: " + e.getMessage());
+                        }
+                    }
+                }
+            });
+            receiver.setDaemon(true);
+            receiver.start();
+
+            // Main input loop
+            while (true) {
+                System.out.print("[You]: ");
+                if (!scanner.hasNextLine()) break;
+                String line = scanner.nextLine();
+                if (line.equalsIgnoreCase("exit") || line.equalsIgnoreCase("/quit")) {
+                    byte[] exitBytes = "exit".getBytes(StandardCharsets.UTF_8);
+                    DatagramPacket exitPacket = new DatagramPacket(exitBytes, exitBytes.length, remoteAddress, remotePort);
+                    socket.send(exitPacket);
+                    break;
+                }
+                if (!line.trim().isEmpty()) {
+                    byte[] data = line.getBytes(StandardCharsets.UTF_8);
+                    DatagramPacket packet = new DatagramPacket(data, data.length, remoteAddress, remotePort);
+                    socket.send(packet);
+                }
+            }
+
+            System.out.println("P2P chat ended.");
+        } catch (IOException e) {
+            System.err.println("Socket error: " + e.getMessage());
+        }
+    }
+}
+```
+
+--- File 2: UDPMultiChatServer.java ---
+```java
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class UDPMultiChatServer {
+    public static final int PORT = 9300;
+
+    // Track registered clients by SocketAddress
+    private static final Map<SocketAddress, String> clients = new ConcurrentHashMap<>();
+
+    public static void main(String[] args) {
+        int port = args.length > 0 ? Integer.parseInt(args[0]) : PORT;
+
+        System.out.println("========================================================");
+        System.out.println("  UDP MULTIUSER CHAT RELAY SERVER LISTENING ON PORT " + port + " (JAVA)");
+        System.out.println("========================================================");
+        System.out.println("Waiting for client JOIN datagrams...");
+
+        try (DatagramSocket socket = new DatagramSocket(port)) {
+            byte[] buffer = new byte[1024];
+
+            while (true) {
+                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                socket.receive(packet);
+
+                SocketAddress senderAddr = packet.getSocketAddress();
+                String msg = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8).trim();
+
+                if (msg.startsWith("JOIN")) {
+                    String username = "Anonymous";
+                    if (msg.contains(":")) {
+                        username = msg.substring(msg.indexOf(":") + 1).trim();
+                    }
+
+                    if (!clients.containsKey(senderAddr)) {
+                        clients.put(senderAddr, username);
+                        System.out.println("[Registration] " + username + " registered from " + senderAddr
+                                           + " (Total: " + clients.size() + ")");
+
+                        String welcome = "[Server]: Welcome " + username + " to UDP Multiuser Chat!";
+                        sendPacket(socket, welcome, senderAddr);
+
+                        String joinNotice = "[Server Notice]: " + username + " joined the chat.";
+                        broadcast(socket, joinNotice, senderAddr);
+                    }
+                    continue;
+                }
+
+                if (msg.equalsIgnoreCase("exit") || msg.equalsIgnoreCase("LEAVE") || msg.equalsIgnoreCase("/quit")) {
+                    String username = clients.remove(senderAddr);
+                    if (username != null) {
+                        System.out.println("[Departure] " + username + " has disconnected.");
+                        String leaveNotice = "[Server Notice]: " + username + " left the chat.";
+                        broadcast(socket, leaveNotice, senderAddr);
+                    }
+                    continue;
+                }
+
+                // Chat message
+                String senderName = clients.getOrDefault(senderAddr, "Guest");
+                String broadcastMsg = "[" + senderName + "]: " + msg;
+                System.out.println(broadcastMsg);
+                broadcast(socket, broadcastMsg, senderAddr);
+            }
+
+        } catch (IOException e) {
+            System.err.println("Server error: " + e.getMessage());
+        }
+    }
+
+    private static void broadcast(DatagramSocket socket, String message, SocketAddress excludeAddr) {
+        for (SocketAddress clientAddr : clients.keySet()) {
+            if (!clientAddr.equals(excludeAddr)) {
+                sendPacket(socket, message, clientAddr);
+            }
+        }
+    }
+
+    private static void sendPacket(DatagramSocket socket, String message, SocketAddress destAddr) {
+        try {
+            byte[] bytes = message.getBytes(StandardCharsets.UTF_8);
+            DatagramPacket packet = new DatagramPacket(bytes, bytes.length, destAddr);
+            socket.send(packet);
+        } catch (IOException e) {
+            System.err.println("Failed to send packet to " + destAddr + ": " + e.getMessage());
+        }
+    }
+}
+```
+
+--- File 3: UDPMultiChatClient.java ---
+```java
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.util.Scanner;
+
+public class UDPMultiChatClient {
+    public static final int PORT = 9300;
+
+    public static void main(String[] args) {
+        String serverIP = args.length > 0 ? args[0] : "127.0.0.1";
+        int port = args.length > 1 ? Integer.parseInt(args[1]) : PORT;
+
+        System.out.println("========================================================");
+        System.out.println("        UDP MULTIUSER CHAT CLIENT - JAVA                ");
+        System.out.println("========================================================");
+        System.out.println("Server target: " + serverIP + ":" + port);
+
+        try (DatagramSocket socket = new DatagramSocket();
+             Scanner scanner = new Scanner(System.in)) {
+
+            InetAddress serverAddress = InetAddress.getByName(serverIP);
+
+            System.out.print("Enter your display username: ");
+            String username = scanner.hasNextLine() ? scanner.nextLine() : "Anonymous";
+            if (username.trim().isEmpty()) username = "Anonymous";
+
+            // Send registration datagram
+            String joinPayload = "JOIN:" + username;
+            byte[] joinBytes = joinPayload.getBytes(StandardCharsets.UTF_8);
+            DatagramPacket joinPacket = new DatagramPacket(joinBytes, joinBytes.length, serverAddress, port);
+            socket.send(joinPacket);
+
+            System.out.println("Joined UDP chat session. Type messages and press Enter. Type 'exit' to quit.\n");
+
+            // Background receiver thread
+            Thread receiver = new Thread(() -> {
+                byte[] buffer = new byte[1024];
+                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                while (!socket.isClosed()) {
+                    try {
+                        socket.receive(packet);
+                        String msg = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
+                        System.out.print("\r" + msg + "\n[You]: ");
+                    } catch (IOException e) {
+                        if (!socket.isClosed()) {
+                            System.err.println("Receive error: " + e.getMessage());
+                        }
+                    }
+                }
+            });
+            receiver.setDaemon(true);
+            receiver.start();
+
+            // Main input loop
+            while (true) {
+                System.out.print("[You]: ");
+                if (!scanner.hasNextLine()) break;
+                String msg = scanner.nextLine();
+                if (msg.equalsIgnoreCase("exit") || msg.equalsIgnoreCase("/quit")) {
+                    byte[] exitBytes = "exit".getBytes(StandardCharsets.UTF_8);
+                    DatagramPacket exitPacket = new DatagramPacket(exitBytes, exitBytes.length, serverAddress, port);
+                    socket.send(exitPacket);
+                    break;
+                }
+                if (!msg.trim().isEmpty()) {
+                    byte[] bytes = msg.getBytes(StandardCharsets.UTF_8);
+                    DatagramPacket packet = new DatagramPacket(bytes, bytes.length, serverAddress, port);
+                    socket.send(packet);
+                }
+            }
+
+            System.out.println("You left the UDP chat.");
+
+        } catch (IOException e) {
+            System.err.println("Client error: " + e.getMessage());
+        }
+    }
+}
+```
+
+9. EXPLANATION OF THE CODE
+--------------------------------------------------------------------------------
+- Connectionless State Management: `ConcurrentHashMap<SocketAddress, String>` tracks client `SocketAddress` objects (combining IP and ephemeral port) and user-chosen names.
+- `SocketAddress` Equality: In Java, `SocketAddress` (specifically `InetSocketAddress`) correctly implements `equals()` and `hashCode()`, making it an ideal key in concurrent hash collections.
+- Threading in UDP Clients: Spawns a background daemon thread running `socket.receive()` in a loop so incoming broadcast datagrams are rendered immediately while `Scanner` waits for console typing.
+- Control Tokens: Recognizes `JOIN:<name>` for registration and `exit`/`LEAVE`/`/quit` for departure, allowing the server to maintain a fresh participant list.
+
+10. SETUP AND INSTALLATION INSTRUCTIONS
+--------------------------------------------------------------------------------
+1. Navigate to java folder:
+   `cd Experiment-08-UDP-Peer-to-Peer-and-Multiuser-Chat/java`
+2. Check JDK version: `javac -version` and `java -version`.
+
+11. EXACT COMPILE/RUN COMMANDS
+--------------------------------------------------------------------------------
+Compile:
+`javac UDPP2PChat.java UDPMultiChatServer.java UDPMultiChatClient.java`
+
+Run Peer-to-Peer Chat:
+- Peer 1: `java UDPP2PChat 9250 9251 127.0.0.1`
+- Peer 2: `java UDPP2PChat 9251 9250 127.0.0.1`
+
+Run Multiuser Chat:
+- Server: `java UDPMultiChatServer 9300`
+- Client 1: `java UDPMultiChatClient 127.0.0.1 9300`
+- Client 2: `java UDPMultiChatClient 127.0.0.1 9300`
+- Client 3: `java UDPMultiChatClient 127.0.0.1 9300`
+
+12. EXECUTION ORDER
+--------------------------------------------------------------------------------
+1. For Multiuser chat, start `UDPMultiChatServer` in Terminal 1 first.
+2. Launch `UDPMultiChatClient` in Terminals 2, 3, and 4.
+3. Enter username when prompted.
+4. Messages typed on any client console are forwarded and displayed on all other client terminals.
+5. Enter `exit` to disconnect.
+
+13. SAMPLE INPUT AND EXPECTED OUTPUT
+--------------------------------------------------------------------------------
+Server Terminal:
+```
+UDP MULTIUSER CHAT RELAY SERVER LISTENING ON PORT 9300 (JAVA)
+Waiting for client JOIN datagrams...
+[Registration] Alice registered from /127.0.0.1:50023 (Total: 1)
+[Registration] Bob registered from /127.0.0.1:50024 (Total: 2)
+[Alice]: Hello everyone!
+[Bob]: Hi Alice!
+[Departure] Alice has disconnected.
+```
+
+Client Terminal 2 (Bob):
+```
+Server target: 127.0.0.1:9300
+Enter your display username: Bob
+Joined UDP chat session. Type messages and press Enter. Type 'exit' to quit.
+[Server]: Welcome Bob to UDP Multiuser Chat!
+[Alice]: Hello everyone!
+[You]: Hi Alice!
+[Server Notice]: Alice left the chat.
+```
+
+14. HOW TO TEST AND VERIFY THE RESULT
+--------------------------------------------------------------------------------
+- Test concurrent delivery: Open 3 client terminals, send messages rapidly from two clients, verify the third client receives all messages cleanly.
+- Test interoperability: A Java UDP client can send messages to the C++ server and vice versa over Port 9300.
+
+15. COMMON ERRORS AND TROUBLESHOOTING
+--------------------------------------------------------------------------------
+1. `java.net.BindException: Address already in use`: Ensure local ports for P2P (9250/9251) and Server (9300) are not occupied by other background processes.
+2. `DatagramPacket` buffer reuse: Buffer must be allocated freshly or read with explicit offset and length (`packet.getLength()`) to prevent trailing stale bytes.
+
+16. MANUAL CODE NOTE / CORRECTION / ENHANCEMENT
+--------------------------------------------------------------------------------
+- Used `ConcurrentHashMap` for thread-safe client address storage.
+- Implemented `JOIN:<username>` handshake for clean user identification.
+- Handled `/quit` and `exit` gracefully with broadcast departure notices.
+
+17. VIVA QUESTIONS WITH CONCISE, CORRECT ANSWERS
+--------------------------------------------------------------------------------
+Q1: What Java classes are used for UDP chat?
+A: `java.net.DatagramSocket` and `java.net.DatagramPacket`.
+
+Q2: How does the Java UDP server identify the return address of a client?
+A: By calling `packet.getSocketAddress()` on the received `DatagramPacket`.
+
+Q3: Why doesn't the Java UDP server need to call `accept()`?
+A: Because UDP is connectionless; it does not establish persistent connection streams.
+
+Q4: What data structure is used to store client addresses on the server?
+A: A `ConcurrentHashMap<SocketAddress, String>` that maps client endpoints to usernames.
+
+Q5: Why is `ConcurrentHashMap` preferred over a standard `HashMap`?
+A: It provides thread-safe operations for concurrent reads, additions, and removals without explicit external synchronization locks.
+
+Q6: In `UDPP2PChat`, why are two distinct ports specified?
+A: When running both peers on the loopback IP (`127.0.0.1`), each process must bind to a different local port (e.g., 9250 vs 9251).
+
+Q7: What does `receiver.setDaemon(true)` do in the client?
+A: It ensures that the background receiver thread terminates automatically when the user exits the main loop.
+
+Q8: How does the client register with the server?
+A: By transmitting a control packet formatted as `JOIN:<username>`.
+
+Q9: What happens if a UDP packet is lost during chat transmission?
+A: The packet is dropped; basic UDP does not retransmit unless an application-layer ARQ mechanism is implemented.
+
+Q10: What is the benefit of UDP chat over TCP chat?
+A: Lower latency and less server overhead because no three-way handshake, state maintenance, or ACK traffic is required.
+
+Q11: What is the maximum payload size of a single UDP datagram in Java?
+A: Up to 65,507 bytes, though practical packets should stay under 1500 bytes (MTU) to avoid fragmentation.
+
+Q12: How do you gracefully disconnect from the UDP chat?
+A: By typing `exit` or `/quit`, which dispatches an exit packet to remove the client from the server's registry.
+
+Q13: What exception is thrown if `socket.receive()` times out?
+A: `java.net.SocketTimeoutException` (when a timeout is configured using `socket.setSoTimeout()`).
+
+Q14: How does a UDP client get assigned an ephemeral port?
+A: By calling the zero-argument constructor `new DatagramSocket()`.
+
+Q15: Can a Java UDP chat client communicate with a C++ UDP chat server?
+A: Yes. Both transmit standard raw UDP datagrams containing UTF-8 formatted text packets over port 9300.
+
+18. 30–60 SECOND EXPLANATION FOR THE EXAMINER
+--------------------------------------------------------------------------------
+"In this experiment, I implemented full-duplex Peer-to-Peer and Multiuser chat applications in Java using UDP datagram sockets on Port 9300. In `UDPP2PChat`, two nodes bind to alternate local ports and send datagrams directly to each other's target port using independent receiver threads. In `UDPMultiChatServer`, the server maintains client `SocketAddress` endpoints in a `ConcurrentHashMap`. Clients register by sending a `JOIN:<username>` datagram. The server receives text datagrams via `socket.receive()` and iterates through its registry, relaying the message to all other active clients using `socket.send()`. This provides a lightweight, stateless broadcast chat architecture."
+
+19. QUICK REVISION POINTS
+--------------------------------------------------------------------------------
+- Protocol: UDP (`DatagramSocket`, `DatagramPacket`).
+- Multiuser server: Uses `ConcurrentHashMap<SocketAddress, String>` to store client addresses.
+- Registration: Client dispatches `JOIN:<username>` datagram upon launch.
+- Relay: Server iterates client map, sending datagrams via `socket.send()`.
+- Client design: Background receiver daemon thread + main scanner input loop.
+
+20. RESULT / CONCLUSION
+--------------------------------------------------------------------------------
+UDP-based Peer-to-Peer and Multiuser chat applications were successfully implemented, compiled, and verified in Java. Stateless client registration, datagram relaying, and concurrent bidirectional messaging were demonstrated.
+TEST STATUS: Tested successfully on macOS (OpenJDK 25.0.4.1, arm64).
+================================================================================

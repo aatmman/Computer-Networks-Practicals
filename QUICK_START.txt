@@ -1,0 +1,171 @@
+================================================================================
+     PRACTICAL EXAM DAY QUICK-START CHECKLIST & CHEAT SHEET
+================================================================================
+
+Keep this guide handy on your examination desk. It contains the exact order of 
+commands to compile, execute, demonstrate, and explain during your practical exam.
+
+--------------------------------------------------------------------------------
+1. GOLDEN RULE OF CLIENT-SERVER SOCKET DEMONSTRATION
+--------------------------------------------------------------------------------
+ALWAYS START THE SERVER (OR RECEIVER) FIRST IN TERMINAL 1.
+Only run the client in Terminal 2 after the server displays:
+"Listening on port X..." or "Waiting for connection...".
+
+If you start the client before the server:
+- TCP: `Connection refused` (error).
+- UDP: Datagrams will be silently lost.
+
+--------------------------------------------------------------------------------
+2. QUICK COMPILATION CHEAT SHEET (RUN BEFORE CALLING EXAMINER)
+--------------------------------------------------------------------------------
+Compile all C++ programs:
+```bash
+# Exp 3: CRC
+cd Experiment-03-CRC-Error-Detection/cpp && g++ -std=c++17 -Wall -Wextra crc.cpp -o crc && cd ../..
+
+# Exp 4: Sliding Window
+cd Experiment-04-Sliding-Window-GBN-SR/cpp && g++ -std=c++17 -Wall -Wextra go_back_n.cpp -o gbn && g++ -std=c++17 -Wall -Wextra selective_repeat.cpp -o sr && cd ../..
+
+# Exp 5: TCP Sockets (Hello, File, Calc)
+cd Experiment-05-TCP-Socket-Programming/cpp
+g++ -std=c++17 hello_server.cpp -o hello_server && g++ -std=c++17 hello_client.cpp -o hello_client
+g++ -std=c++17 file_server.cpp -o file_server && g++ -std=c++17 file_client.cpp -o file_client
+g++ -std=c++17 calculator_server.cpp -o calculator_server && g++ -std=c++17 calculator_client.cpp -o calculator_client
+cd ../..
+
+# Exp 6: UDP File Transfer
+cd Experiment-06-UDP-File-Transfer/cpp
+g++ -std=c++17 udp_file_receiver.cpp -o udp_recv && g++ -std=c++17 udp_file_sender.cpp -o udp_send
+cd ../..
+
+# Exp 7: TCP Chat (Requires -pthread)
+cd Experiment-07-TCP-Peer-to-Peer-and-Multiuser-Chat/cpp
+g++ -std=c++17 -pthread p2p_chat.cpp -o p2p_chat
+g++ -std=c++17 -pthread multiuser_chat_server.cpp -o multiuser_chat_server
+g++ -std=c++17 -pthread multiuser_chat_client.cpp -o multiuser_chat_client
+cd ../..
+
+# Exp 8: UDP Chat (Requires -pthread)
+cd Experiment-08-UDP-Peer-to-Peer-and-Multiuser-Chat/cpp
+g++ -std=c++17 -pthread udp_p2p_chat.cpp -o udp_p2p
+g++ -std=c++17 udp_multiuser_server.cpp -o udp_multi_server
+g++ -std=c++17 -pthread udp_multiuser_client.cpp -o udp_multi_client
+cd ../..
+```
+
+Compile all Java programs:
+```bash
+# Exp 3: CRC
+javac Experiment-03-CRC-Error-Detection/java/CRC.java
+
+# Exp 4: Sliding Window
+javac Experiment-04-Sliding-Window-GBN-SR/java/GoBackN.java Experiment-04-Sliding-Window-GBN-SR/java/SelectiveRepeat.java
+
+# Exp 5: TCP Sockets
+javac Experiment-05-TCP-Socket-Programming/java/*.java
+
+# Exp 6: UDP File Transfer
+javac Experiment-06-UDP-File-Transfer/java/*.java
+
+# Exp 7: TCP Chat
+javac Experiment-07-TCP-Peer-to-Peer-and-Multiuser-Chat/java/*.java
+
+# Exp 8: UDP Chat
+javac Experiment-08-UDP-Peer-to-Peer-and-Multiuser-Chat/java/*.java
+```
+
+--------------------------------------------------------------------------------
+3. STEP-BY-STEP EXAM DEMONSTRATIONS
+--------------------------------------------------------------------------------
+
+DEMO A: EXPERIMENT 3 (CRC)
+- C++: `./Experiment-03-CRC-Error-Detection/cpp/crc`
+- Java: `java -cp Experiment-03-CRC-Error-Detection/java CRC`
+- Recommended inputs for demo:
+  Message: `Hi`
+  Generator polynomial: `1101`
+  First run: `n` (no error) -> remainder is `000` -> Status: ACCEPTED.
+  Second run: `y`, flip bit `5` -> remainder is `110` -> Status: REJECTED (Error detected).
+
+DEMO B: EXPERIMENT 4 (SLIDING WINDOW GBN vs SR)
+- Show both with identical inputs:
+  Total frames: `8`, Window size: `4`, Lost frame: `2`.
+- Run GBN: `./Experiment-04-Sliding-Window-GBN-SR/cpp/gbn`
+  Observe: Frame 2 lost -> retransmits 2 frames (2 and 3). Total retransmissions = 2.
+- Run SR: `./Experiment-04-Sliding-Window-GBN-SR/cpp/sr`
+  Observe: Frame 2 lost -> Frame 3 is buffered and individually ACKed -> retransmits ONLY Frame 2. Total retransmissions = 1.
+- Tell examiner: "Selective Repeat saved 1 retransmission because it buffers out-of-order frames."
+
+DEMO C: EXPERIMENT 5 (TCP SOCKETS)
+- Hello (Port 9001):
+  Terminal 1: `./hello_server`
+  Terminal 2: `./hello_client`
+- Calculator (Port 9003):
+  Terminal 1: `./calculator_server`
+  Terminal 2: `./calculator_client` -> Enter: `45 * 8` -> Result: `360`.
+
+DEMO D: EXPERIMENT 6 (UDP FILE TRANSFER - PORT 9100)
+- Terminal 1: `./udp_recv rec_sample.txt`
+- Terminal 2: `./udp_send sample.txt 127.0.0.1`
+- Verify equality: `diff -s sample.txt rec_sample.txt`
+
+DEMO E: EXPERIMENT 7 (TCP MULTIUSER CHAT - PORT 9201 / 6000)
+- Terminal 1 (Server): `./multiuser_chat_server 9201`
+- Terminal 2 (Alice): `./multiuser_chat_client 127.0.0.1 9201` -> username `Alice`
+- Terminal 3 (Bob): `./multiuser_chat_client 127.0.0.1 9201` -> username `Bob`
+- Send message from Alice -> immediately appears on Bob's screen!
+
+DEMO F: EXPERIMENT 8 (UDP MULTIUSER CHAT - PORT 9300)
+- Terminal 1: `./udp_multi_server 9300`
+- Terminal 2: `./udp_multi_client 127.0.0.1 9300` -> `Alice`
+- Terminal 3: `./udp_multi_client 127.0.0.1 9300` -> `Bob`
+
+--------------------------------------------------------------------------------
+4. TESTING ON TWO SEPARATE PHYSICAL LAB MACHINES
+--------------------------------------------------------------------------------
+1. Find Server's LAN IP:
+   - Linux: `hostname -I` or `ip addr show`
+   - Windows: `ipconfig`
+   - Example: Server IP is `192.168.1.15`.
+2. Ensure both machines are on the same subnet (e.g., `192.168.1.x`).
+3. Check connectivity from client machine: `ping 192.168.1.15`.
+4. Allow ports in server firewall:
+   - Ubuntu: `sudo ufw allow 9001:9300/tcp && sudo ufw allow 9001:9300/udp`
+5. Run server on Machine 1: `./hello_server`
+6. Run client on Machine 2, replacing `127.0.0.1` with Machine 1's LAN IP:
+   `./hello_client 192.168.1.15`
+
+--------------------------------------------------------------------------------
+5. 60-SECOND VIVA RAPID FIRE CHEAT SHEET
+--------------------------------------------------------------------------------
+Q: Difference between TCP and UDP?
+A: TCP is connection-oriented, reliable, byte-stream, uses 3-way handshake and automatic retransmission. UDP is connectionless, unreliable, datagram-based, with minimal 8-byte header overhead.
+
+Q: Can CRC correct errors?
+A: No, CRC strictly detects errors using polynomial modulo-2 XOR division. Error correction is achieved by ARQ retransmission.
+
+Q: Difference between GBN and Selective Repeat?
+A: GBN receiver window is 1 and discards out-of-order frames, forcing retransmission of the entire window. SR receiver window is N, buffers out-of-order frames, and retransmits only the single lost frame.
+
+Q: Maximum window size in Selective Repeat with m bits?
+A: 2^(m - 1), exactly half the sequence number space, to prevent overlapping between consecutive cycles.
+
+Q: What does accept() return in TCP?
+A: A new socket descriptor specifically bound to that client's connection, leaving the listening socket available for other incoming requests.
+
+Q: Why must a UDP multiuser server use a JOIN message?
+A: Because UDP is stateless; the server must explicitly record each client's IP and port into a registry map since there is no persistent connection stream.
+
+Q: What does `SO_REUSEADDR` do?
+A: Allows immediate rebinding to a port in the `TIME_WAIT` state, preventing "Address already in use" errors during practical exams.
+
+Q: Default document root of Apache on Ubuntu?
+A: `/var/www/html/` (landing file `index.html`).
+
+Q: Wireshark: Capture Filter vs Display Filter?
+A: Capture filters (BPF syntax) drop packets before saving; display filters (Wireshark syntax) filter views of already captured packets without deleting them.
+
+Q: Why doesn't Wireshark show plaintext passwords for Facebook?
+A: Because modern websites use HTTPS/TLS (port 443); payloads are encrypted with AES-GCM or ChaCha20, so only metadata (IP, port, TCP flags, SNI) is visible.
+================================================================================

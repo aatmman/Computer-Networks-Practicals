@@ -1,0 +1,608 @@
+================================================================================
+EXPERIMENT 08: UDP PEER-TO-PEER AND MULTIUSER CHAT (C++)
+================================================================================
+
+1. EXPERIMENT TITLE AND NUMBER
+--------------------------------------------------------------------------------
+Experiment No. 8: Program using UDP Sockets for Wired Network: Peer to Peer Chat and Multiuser Chat.
+
+2. AIM
+--------------------------------------------------------------------------------
+To design, write, compile, and execute complete multithreaded C++ socket programs using connectionless UDP datagrams (`SOCK_DGRAM`) that implement:
+  (a) A bidirectional Peer-to-Peer (P2P) chat application between two endpoints, and
+  (b) A centralized Multiuser chat server with dynamic client registration (JOIN datagrams) and datagram relay broadcasting across all active clients.
+
+3. REQUIREMENTS
+--------------------------------------------------------------------------------
+- Software: Linux, macOS Darwin, or Windows with POSIX and pthread support.
+- Compiler: GCC / Clang C++ Compiler (`g++` or `clang++`) supporting C++11 or higher (C++17 recommended) with `-pthread`.
+- Networking API: Standard POSIX Sockets (`<sys/socket.h>`, `<netinet/in.h>`, `<arpa/inet.h>`, `<unistd.h>`).
+- Concurrency: Standard C++ Threads (`<thread>`, `<atomic>`).
+- Ports Allocated:
+  * P2P Chat: Ports 9250 and 9251 (swapped local/remote)
+  * Multiuser Server: Port 9300
+- Tools: Three or more terminal windows to simulate multiple simultaneous chat clients.
+
+4. LEARNING OBJECTIVES
+--------------------------------------------------------------------------------
+- Understand the architectural differences between connectionless UDP chat and connection-oriented TCP chat.
+- Implement bidirectional communication over UDP using independent sender and receiver threads.
+- Implement address tracking and client bookkeeping in a connectionless protocol using registration datagrams (`JOIN`).
+- Implement datagram relay and broadcasting logic with `sendto()` across dynamically registered `sockaddr_in` endpoints.
+- Manage graceful departure and timeout handling in stateless UDP communications.
+
+5. THEORY AND IMPORTANT TERMINOLOGY
+--------------------------------------------------------------------------------
+- UDP Datagram Characteristics:
+  * Connectionless: No 3-way handshake (`connect()`) or connection listener (`listen()`/`accept()`).
+  * Stateless: The operating system does not track active peers or connection state.
+  * Best-Effort Delivery: Datagrams are transmitted independently; delivery, ordering, and duplicate prevention are not guaranteed.
+- Address Tracking in UDP Multiuser Chat:
+  * Because UDP has no persistent connection table (unlike TCP's socket descriptors returned by `accept()`), a UDP multiuser server must explicitly learn and record the IP address and port (`sockaddr_in`) of every client.
+  * This is accomplished using a registration control datagram: when a client starts, it transmits `JOIN:<username>` to the server's known port (9300). The server records the client's `sockaddr_in` into its active client registry.
+- Datagram Forwarding (Relay):
+  * When any registered client sends a chat message, the server iterates through its `vector<ClientEntry>` and uses `sendto()` to relay the message to every other registered address.
+- Full-Duplex P2P UDP Chat:
+  * Each peer binds a UDP socket to a designated local port (e.g., Peer A on 9250, Peer B on 9251).
+  * Peer A sends datagrams to Peer B's port 9251; Peer B sends datagrams to Peer A's port 9250.
+  * A background thread handles `recvfrom()` while the main thread reads user keyboard input and calls `sendto()`.
+
+6. WORKING PRINCIPLE / ALGORITHM
+--------------------------------------------------------------------------------
+Part (a) - P2P Chat:
+1. Launch Peer 1: bind local port `9250`, destination target `127.0.0.1:9251`.
+2. Launch Peer 2: bind local port `9251`, destination target `127.0.0.1:9250`.
+3. Each peer spawns a detached receiver thread executing `recvfrom()` in a loop.
+4. The main thread accepts keyboard input and calls `sendto()` to dispatch messages to the remote port.
+5. Entering `exit` sends a termination datagram and closes the socket.
+
+Part (b) - Multiuser Chat:
+1. Server binds a single UDP socket to Port 9300.
+2. Server loops calling `recvfrom()` to receive incoming datagrams and capture client `sockaddr_in`:
+   - If payload begins with `JOIN:<username>`, add client's address and name to `clients` vector; broadcast join announcement.
+   - If payload is `exit` or `LEAVE`, remove client from vector; broadcast departure announcement.
+   - For all other messages, prepend sender's name (`[Alice]: Message`) and loop through `clients`, calling `sendto()` for each client except the sender.
+3. Client:
+   - Takes server IP and port, prompts user for display username.
+   - Dispatches `JOIN:<username>` datagram to server.
+   - Spawns background thread executing `recvfrom()` loop to print broadcast messages.
+   - Main thread reads typed text and sends datagrams to server via `sendto()`.
+
+7. NETWORK TOPOLOGY DIAGRAM
+--------------------------------------------------------------------------------
+```
+                       +-----------------------------+
+                       |  UDP Multiuser Chat Server  |
+                       |       (Port 9300)           |
+                       |  - vector<ClientEntry>      |
+                       +--+----------+----------+----+
+                          ^          |          |
+            JOIN:Alice    |          |          |
+            & Chat msgs   |  Relay   |  Relay   |
+                          |  sendto  |  sendto  |
+                          v          v          v
+                   +----------+ +----------+ +----------+
+                   | Client 1 | | Client 2 | | Client 3 |
+                   | "Alice"  | |  "Bob"   | |"Charlie" |
+                   +----------+ +----------+ +----------+
+
+Message Relay:
+Alice (Port 59019) sends: "Hello all" -> Server (Port 9300)
+Server checks client list -> matches Alice
+Server relays "[Alice]: Hello all" -> Bob (Port 50123)
+Server relays "[Alice]: Hello all" -> Charlie (Port 50124)
+```
+
+8. COMPLETE SOURCE CODE (C++)
+--------------------------------------------------------------------------------
+All source files are located in `Experiment-08-UDP-Peer-to-Peer-and-Multiuser-Chat/cpp/`:
+
+--- File 1: udp_p2p_chat.cpp ---
+```cpp
+#include <iostream>
+#include <string>
+#include <cstring>
+#include <thread>
+#include <atomic>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+using namespace std;
+
+atomic<bool> running(true);
+
+void receiveLoop(int sockFd) {
+    char buffer[1024];
+    sockaddr_in fromAddr{};
+    socklen_t fromLen = sizeof(fromAddr);
+
+    while (running) {
+        ssize_t n = recvfrom(sockFd, buffer, sizeof(buffer) - 1, 0,
+                             (sockaddr*)&fromAddr, &fromLen);
+        if (n > 0) {
+            buffer[n] = '\0';
+            string msg(buffer);
+            if (msg == "exit") {
+                cout << "\n[Notice] Peer has left the chat. Press Enter to exit." << endl;
+                running = false;
+                break;
+            }
+            char senderIP[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &fromAddr.sin_addr, senderIP, sizeof(senderIP));
+            cout << "\r[Peer " << senderIP << ":" << ntohs(fromAddr.sin_port) << "]: "
+                 << buffer << "\n[You]: " << flush;
+        } else if (n < 0 && running) {
+            break;
+        }
+    }
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 3) {
+        cout << "Usage: ./udp_p2p <local_port> <remote_port> [remote_ip]\n";
+        cout << "Example (Terminal 1): ./udp_p2p 9250 9251 127.0.0.1\n";
+        cout << "Example (Terminal 2): ./udp_p2p 9251 9250 127.0.0.1\n";
+        return 1;
+    }
+
+    int localPort = atoi(argv[1]);
+    int remotePort = atoi(argv[2]);
+    string remoteIP = argc > 3 ? argv[3] : "127.0.0.1";
+
+    int sockFd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockFd < 0) {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    int opt = 1;
+    setsockopt(sockFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    sockaddr_in localAddr{};
+    localAddr.sin_family = AF_INET;
+    localAddr.sin_addr.s_addr = INADDR_ANY;
+    localAddr.sin_port = htons(localPort);
+
+    if (::bind(sockFd, (sockaddr*)&localAddr, sizeof(localAddr)) < 0) {
+        perror("Bind failed");
+        close(sockFd);
+        return 1;
+    }
+
+    sockaddr_in remoteAddr{};
+    remoteAddr.sin_family = AF_INET;
+    remoteAddr.sin_port = htons(remotePort);
+    if (inet_pton(AF_INET, remoteIP.c_str(), &remoteAddr.sin_addr) <= 0) {
+        cerr << "Invalid remote IP address: " << remoteIP << endl;
+        close(sockFd);
+        return 1;
+    }
+
+    cout << "========================================================\n";
+    cout << "         UDP PEER-TO-PEER (P2P) CHAT - C++              \n";
+    cout << "========================================================\n";
+    cout << "Bound to local port " << localPort << ".\n";
+    cout << "Sending to remote peer at " << remoteIP << ":" << remotePort << ".\n";
+    cout << "Type messages and press Enter. Type 'exit' to quit.\n";
+
+    thread receiver(receiveLoop, sockFd);
+
+    string msg;
+    while (running) {
+        cout << "[You]: " << flush;
+        if (!getline(cin, msg)) break;
+        if (msg == "exit") {
+            sendto(sockFd, "exit", 4, 0, (sockaddr*)&remoteAddr, sizeof(remoteAddr));
+            running = false;
+            break;
+        }
+        if (!msg.empty() && running) {
+            sendto(sockFd, msg.c_str(), msg.size(), 0,
+                   (sockaddr*)&remoteAddr, sizeof(remoteAddr));
+        }
+    }
+
+    running = false;
+    close(sockFd);
+    if (receiver.joinable()) {
+        receiver.detach();
+    }
+
+    cout << "P2P chat ended.\n";
+    return 0;
+}
+```
+
+--- File 2: udp_multiuser_server.cpp ---
+```cpp
+#include <iostream>
+#include <string>
+#include <cstring>
+#include <vector>
+#include <algorithm>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+using namespace std;
+
+const int PORT = 9300;
+
+struct ClientEntry {
+    sockaddr_in addr;
+    string name;
+};
+
+bool sameAddr(const sockaddr_in &a, const sockaddr_in &b) {
+    return a.sin_addr.s_addr == b.sin_addr.s_addr && a.sin_port == b.sin_port;
+}
+
+int main(int argc, char* argv[]) {
+    int port = PORT;
+    if (argc > 1) {
+        port = atoi(argv[1]);
+    }
+
+    int sockFd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockFd < 0) {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    int opt = 1;
+    setsockopt(sockFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    sockaddr_in serverAddr{};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(port);
+
+    if (::bind(sockFd, (sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+        perror("Bind failed");
+        close(sockFd);
+        return 1;
+    }
+
+    cout << "========================================================\n";
+    cout << "  UDP MULTIUSER CHAT RELAY SERVER LISTENING ON PORT " << port << "\n";
+    cout << "========================================================\n";
+    cout << "Waiting for client JOIN datagrams...\n";
+
+    vector<ClientEntry> clients;
+    char buffer[1024];
+    sockaddr_in clientAddr{};
+    socklen_t clientLen = sizeof(clientAddr);
+
+    while (true) {
+        ssize_t n = recvfrom(sockFd, buffer, sizeof(buffer) - 1, 0,
+                             (sockaddr*)&clientAddr, &clientLen);
+        if (n <= 0) continue;
+        buffer[n] = '\0';
+        string msg(buffer);
+
+        char clientIP[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, sizeof(clientIP));
+        int clientPort = ntohs(clientAddr.sin_port);
+
+        // Check if message is a registration request: "JOIN:<username>" or "JOIN"
+        if (msg.rfind("JOIN", 0) == 0) {
+            string username = "Anonymous";
+            if (msg.size() > 5 && msg[4] == ':') {
+                username = msg.substr(5);
+            }
+
+            auto it = find_if(clients.begin(), clients.end(),
+                              [&](const ClientEntry &c) { return sameAddr(c.addr, clientAddr); });
+
+            if (it == clients.end()) {
+                clients.push_back({clientAddr, username});
+                cout << "[Registration] " << username << " registered from "
+                     << clientIP << ":" << clientPort << " (Total: " << clients.size() << ")\n";
+
+                string welcome = "[Server]: Welcome " + username + " to UDP Multiuser Chat!";
+                sendto(sockFd, welcome.c_str(), welcome.size(), 0,
+                       (sockaddr*)&clientAddr, sizeof(clientAddr));
+
+                string joinNotice = "[Server Notice]: " + username + " joined the chat.";
+                for (const auto &c : clients) {
+                    if (!sameAddr(c.addr, clientAddr)) {
+                        sendto(sockFd, joinNotice.c_str(), joinNotice.size(), 0,
+                               (sockaddr*)&c.addr, sizeof(c.addr));
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Check if message is exit
+        if (msg == "exit" || msg == "LEAVE") {
+            auto it = find_if(clients.begin(), clients.end(),
+                              [&](const ClientEntry &c) { return sameAddr(c.addr, clientAddr); });
+            if (it != clients.end()) {
+                string leaverName = it->name;
+                clients.erase(it);
+                cout << "[Departure] " << leaverName << " has disconnected.\n";
+
+                string leaveNotice = "[Server Notice]: " + leaverName + " left the chat.";
+                for (const auto &c : clients) {
+                    sendto(sockFd, leaveNotice.c_str(), leaveNotice.size(), 0,
+                           (sockaddr*)&c.addr, sizeof(c.addr));
+                }
+            }
+            continue;
+        }
+
+        // Standard chat message: lookup sender username
+        string senderName = "Client";
+        auto it = find_if(clients.begin(), clients.end(),
+                          [&](const ClientEntry &c) { return sameAddr(c.addr, clientAddr); });
+        if (it != clients.end()) {
+            senderName = it->name;
+        } else {
+            // Unregistered client sending message -> auto register
+            clients.push_back({clientAddr, "Guest" + to_string(clientPort)});
+            senderName = "Guest" + to_string(clientPort);
+        }
+
+        string formattedMsg = "[" + senderName + "]: " + msg;
+        cout << formattedMsg << endl;
+
+        // Relay datagram to all other registered clients
+        for (const auto &c : clients) {
+            if (!sameAddr(c.addr, clientAddr)) {
+                sendto(sockFd, formattedMsg.c_str(), formattedMsg.size(), 0,
+                       (sockaddr*)&c.addr, sizeof(c.addr));
+            }
+        }
+    }
+
+    close(sockFd);
+    return 0;
+}
+```
+
+--- File 3: udp_multiuser_client.cpp ---
+```cpp
+#include <iostream>
+#include <string>
+#include <cstring>
+#include <thread>
+#include <atomic>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+using namespace std;
+
+const int PORT = 9300;
+atomic<bool> running(true);
+
+void receiveLoop(int sockFd) {
+    char buffer[1024];
+    sockaddr_in fromAddr{};
+    socklen_t fromLen = sizeof(fromAddr);
+
+    while (running) {
+        ssize_t n = recvfrom(sockFd, buffer, sizeof(buffer) - 1, 0,
+                             (sockaddr*)&fromAddr, &fromLen);
+        if (n > 0) {
+            buffer[n] = '\0';
+            cout << "\r" << buffer << "\n[You]: " << flush;
+        } else if (n < 0 && running) {
+            break;
+        }
+    }
+}
+
+int main(int argc, char* argv[]) {
+    string serverIP = "127.0.0.1";
+    int port = PORT;
+
+    if (argc > 1) {
+        serverIP = argv[1];
+    }
+    if (argc > 2) {
+        port = atoi(argv[2]);
+    }
+
+    int sockFd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockFd < 0) {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    sockaddr_in serverAddr{};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port);
+    if (inet_pton(AF_INET, serverIP.c_str(), &serverAddr.sin_addr) <= 0) {
+        cerr << "Invalid server IP address: " << serverIP << endl;
+        close(sockFd);
+        return 1;
+    }
+
+    cout << "========================================================\n";
+    cout << "        UDP MULTIUSER CHAT CLIENT - C++                 \n";
+    cout << "========================================================\n";
+    cout << "Server target: " << serverIP << ":" << port << endl;
+
+    string username;
+    cout << "Enter your display username: ";
+    getline(cin, username);
+    if (username.empty()) username = "Anonymous";
+
+    // Send JOIN datagram
+    string joinPayload = "JOIN:" + username;
+    sendto(sockFd, joinPayload.c_str(), joinPayload.size(), 0,
+           (sockaddr*)&serverAddr, sizeof(serverAddr));
+
+    cout << "Joined UDP chat session. Type messages and press Enter. Type 'exit' to quit.\n";
+
+    thread receiver(receiveLoop, sockFd);
+
+    string msg;
+    while (running) {
+        cout << "[You]: " << flush;
+        if (!getline(cin, msg)) break;
+        if (msg == "exit") {
+            sendto(sockFd, "exit", 4, 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
+            running = false;
+            break;
+        }
+        if (!msg.empty() && running) {
+            sendto(sockFd, msg.c_str(), msg.size(), 0,
+                   (sockaddr*)&serverAddr, sizeof(serverAddr));
+        }
+    }
+
+    running = false;
+    close(sockFd);
+    if (receiver.joinable()) {
+        receiver.detach();
+    }
+
+    cout << "You left the UDP chat.\n";
+    return 0;
+}
+```
+
+9. EXPLANATION OF THE CODE
+--------------------------------------------------------------------------------
+- Connectionless State Management: Because UDP sockets maintain no accepted connection state, the server creates an explicit registry `vector<ClientEntry> clients` holding each client's `sockaddr_in` struct and username.
+- Address Matching (`sameAddr`): Compares `sin_addr.s_addr` (IP) and `sin_port` (port) to identify returning clients and eliminate self-echoing.
+- Threading in UDP Clients: Spawns a background thread running `receiveLoop(sockFd)` with `recvfrom()` so incoming broadcast datagrams are rendered immediately while `cin` waits for keyboard input.
+- Control Tokens: Recognizes `JOIN:<name>` for registration and `exit`/`LEAVE` for departure, allowing the server to maintain a fresh participant list.
+
+10. SETUP AND INSTALLATION INSTRUCTIONS
+--------------------------------------------------------------------------------
+1. Navigate to cpp directory:
+   `cd Experiment-08-UDP-Peer-to-Peer-and-Multiuser-Chat/cpp`
+2. Ensure compiler supports C++17 and pthreads.
+
+11. EXACT COMPILE/RUN COMMANDS
+--------------------------------------------------------------------------------
+Compile:
+`g++ -std=c++17 -Wall -Wextra -pthread udp_p2p_chat.cpp -o udp_p2p`
+`g++ -std=c++17 -Wall -Wextra udp_multiuser_server.cpp -o udp_multi_server`
+`g++ -std=c++17 -Wall -Wextra -pthread udp_multiuser_client.cpp -o udp_multi_client`
+
+12. EXECUTION ORDER
+--------------------------------------------------------------------------------
+Part A - UDP P2P Chat:
+1. Terminal 1 (Peer A): `./udp_p2p 9250 9251 127.0.0.1`
+2. Terminal 2 (Peer B): `./udp_p2p 9251 9250 127.0.0.1`
+3. Type messages in either terminal; type `exit` to disconnect.
+
+Part B - UDP Multiuser Chat:
+1. Terminal 1 (Relay Server): `./udp_multi_server 9300`
+2. Terminal 2 (Client 1 - Alice): `./udp_multi_client 127.0.0.1 9300` -> enter `Alice`
+3. Terminal 3 (Client 2 - Bob): `./udp_multi_client 127.0.0.1 9300` -> enter `Bob`
+4. Terminal 4 (Client 3 - Charlie): `./udp_multi_client 127.0.0.1 9300` -> enter `Charlie`
+5. Chat freely; each message is relayed to all other registered clients.
+
+13. SAMPLE INPUT AND EXPECTED OUTPUT
+--------------------------------------------------------------------------------
+UDP Multiuser Server:
+```
+UDP MULTIUSER CHAT RELAY SERVER LISTENING ON PORT 9300
+Waiting for client JOIN datagrams...
+[Registration] Alice registered from 127.0.0.1:59019 (Total: 1)
+[Registration] Bob registered from 127.0.0.1:59020 (Total: 2)
+[Alice]: Hello all!
+[Bob]: Hi Alice!
+[Departure] Alice has disconnected.
+```
+
+Client Terminal (Bob):
+```
+Server target: 127.0.0.1:9300
+Enter your display username: Bob
+Joined UDP chat session. Type messages and press Enter. Type 'exit' to quit.
+[Server]: Welcome Bob to UDP Multiuser Chat!
+[Alice]: Hello all!
+[You]: Hi Alice!
+[Server Notice]: Alice left the chat.
+```
+
+14. HOW TO TEST AND VERIFY THE RESULT
+--------------------------------------------------------------------------------
+- Test multi-client relay: Launch server and 3 clients. Send from Client 1, verify instant appearance on Client 2 and Client 3.
+- Test address rebinding: Terminate client and relaunch with the same or different username; verify server registers the updated ephemeral port cleanly.
+
+15. COMMON ERRORS AND TROUBLESHOOTING
+--------------------------------------------------------------------------------
+1. P2P Chat: Swapped port mismatch. Ensure Peer 1's remote port equals Peer 2's local port and vice versa (e.g. 9250 <-> 9251).
+2. Unregistered messages: If a client does not send `JOIN`, the server automatically creates a guest entry using the client's port to prevent message drops.
+
+16. MANUAL CODE NOTE / CORRECTION / ENHANCEMENT
+--------------------------------------------------------------------------------
+- The manual's minimal sample only used a raw `"JOIN"` string without usernames. Our implementation enhances this to `JOIN:<username>`, enabling named conversation channels.
+- Added explicit departure detection (`exit` / `LEAVE`) and broadcast departure announcements, addressing UDP's inherent lack of connection-termination signaling.
+
+17. VIVA QUESTIONS WITH CONCISE, CORRECT ANSWERS
+--------------------------------------------------------------------------------
+Q1: Why must a UDP multiuser chat server explicitly track client addresses?
+A: Because UDP is connectionless; unlike TCP, there are no persistent socket descriptors representing individual client connections.
+
+Q2: What is the purpose of the `JOIN` datagram?
+A: To announce the client's presence and register its `sockaddr_in` (IP address and port) in the server's routing table.
+
+Q3: How does the server differentiate between clients communicating from the same machine?
+A: By each client socket's unique ephemeral source port number assigned by the operating system.
+
+Q4: What happens if a client terminates abruptly in UDP chat?
+A: The server does not detect the departure immediately unless the client sends a departure datagram or the server implements periodic heartbeat/ping probes.
+
+Q5: What system calls are used for UDP chat in C++?
+A: `socket(AF_INET, SOCK_DGRAM, 0)`, `bind()`, `sendto()`, and `recvfrom()`.
+
+Q6: In UDP P2P chat, why are two ports required when testing on localhost?
+A: Because both peers run on the same IP (127.0.0.1); two distinct local ports (e.g., 9250 and 9251) are necessary so each process can bind without port conflict.
+
+Q7: Does the UDP multiuser server create a new thread for each client?
+A: No. A single UDP server thread can service all clients because incoming datagrams are queued on a single socket buffer and processed sequentially via `recvfrom()`.
+
+Q8: What is the benefit of a single-threaded UDP server compared to multithreaded TCP?
+A: Significantly lower memory overhead and no thread context-switching bottlenecks, enabling high message throughput.
+
+Q9: What is the primary drawback of UDP for chat?
+A: Occasional message loss or out-of-order delivery over congested wide-area networks without application-level acknowledgments.
+
+Q10: What does `sameAddr()` check in the server code?
+A: It verifies whether both the 32-bit IPv4 address (`sin_addr.s_addr`) and the 16-bit port (`sin_port`) are identical.
+
+Q11: How does a UDP client obtain an ephemeral port?
+A: By calling `socket()` and sending a datagram with `sendto()` without calling `bind()`; the OS automatically assigns an unused port.
+
+Q12: What is the UDP header size?
+A: 8 bytes.
+
+Q13: Why is `SO_REUSEADDR` used in UDP socket configuration?
+A: To allow immediate reuse of local port addresses during testing without waiting for operating system timeouts.
+
+Q14: How can heartbeats improve UDP chat reliability?
+A: Clients periodically send ping datagrams; if the server does not receive a ping within a timeout threshold, it removes the inactive client from its list.
+
+Q15: What real-world chat or streaming systems utilize UDP?
+A: Online gaming voice chat (Discord voice, Teamspeak), WebRTC, and VoIP protocols (SIP/RTP).
+
+18. 30–60 SECOND EXPLANATION FOR THE EXAMINER
+--------------------------------------------------------------------------------
+"In this experiment, I implemented full-duplex Peer-to-Peer and Multiuser chat systems in C++ using UDP datagram sockets on Port 9300. Because UDP is connectionless, the server does not use `listen()` or `accept()`; instead, it listens on a single socket and maintains an address registry of active clients. When a client launches, it transmits a `JOIN:<username>` datagram so the server learns its IP and ephemeral port. Subsequent chat datagrams received via `recvfrom()` are dynamically relayed to all other registered clients using `sendto()`. A background thread handles reception while the main thread accepts typed messages, demonstrating lightweight, low-overhead datagram communication."
+
+19. QUICK REVISION POINTS
+--------------------------------------------------------------------------------
+- Socket type: `SOCK_DGRAM` (UDP, Layer 4).
+- Address tracking: Server records `sockaddr_in` upon receiving `JOIN:<name>`.
+- Server design: Single listening socket handles all clients; no per-client thread needed for server socket.
+- Client design: Background receiver thread (`recvfrom`) + main sender thread (`sendto`).
+- Port swapping: P2P uses swapped ports (e.g. 9250 <-> 9251) on loopback.
+
+20. RESULT / CONCLUSION
+--------------------------------------------------------------------------------
+UDP-based Peer-to-Peer and Multiuser chat applications were successfully developed, compiled, and verified in C++. Bidirectional messaging and multi-client datagram relaying were demonstrated across multiple endpoints.
+TEST STATUS: Tested successfully on macOS (Apple clang C++17, arm64).
+================================================================================

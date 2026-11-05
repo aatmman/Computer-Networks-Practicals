@@ -1,0 +1,128 @@
+================================================================================
+           COMPUTER NETWORKS PRACTICALS - MASTER EXPERIMENT INDEX
+================================================================================
+
+This index lists all 10 laboratory experiments, their exact category, and the 
+accompanying implementation guides available in this repository.
+
+--------------------------------------------------------------------------------
+EXPERIMENT 01: SMALL LAN SETUP & RESOURCE SHARING
+--------------------------------------------------------------------------------
+Folder : Experiment-01-Small-LAN/
+Guides : 
+  - EXPERIMENT_GUIDE.txt (Hardware, T568A/B cabling, IP /24 subnets, Windows SMB sharing, 15+ viva questions)
+Source : Physical hardware / OS network configuration.
+
+--------------------------------------------------------------------------------
+EXPERIMENT 02: WAN WITH WIRED AND WIRELESS LAN (CISCO PACKET TRACER)
+--------------------------------------------------------------------------------
+Folder : Experiment-02-WAN-Wired-Wireless/
+Guides : 
+  - EXPERIMENT_GUIDE.txt (Cisco 1941 Routers, Catalyst switches, AP-PT WPA2-PSK, serial DCE/DTE, static/RIP routing)
+Source : Cisco Packet Tracer simulation (.pkt).
+
+--------------------------------------------------------------------------------
+EXPERIMENT 03: ERROR DETECTION AND CORRECTION FOR ASCII CODES USING CRC
+--------------------------------------------------------------------------------
+Folder : Experiment-03-CRC-Error-Detection/
+Guides : 
+  - CPP_GUIDE.txt  (C++ Modulo-2 XOR division, ASCII binary conversion, bit flip simulation, 15+ viva questions)
+  - JAVA_GUIDE.txt (Java Modulo-2 division, StringBuilder, FCS calculation, bit flip simulation, 15+ viva questions)
+Source :
+  - cpp/crc.cpp
+  - java/CRC.java
+
+--------------------------------------------------------------------------------
+EXPERIMENT 04: SLIDING WINDOW PROTOCOLS (GO-BACK-N & SELECTIVE REPEAT)
+--------------------------------------------------------------------------------
+Folder : Experiment-04-Sliding-Window-GBN-SR/
+Guides : 
+  - CPP_GUIDE.txt  (C++ GBN cumulative ACK & rollback, SR individual ACK & receiver buffering, manual bug fixes)
+  - JAVA_GUIDE.txt (Java GBN and SR simulations, window sliding logic, retransmission comparisons, manual bug fixes)
+Source :
+  - cpp/go_back_n.cpp
+  - cpp/selective_repeat.cpp
+  - java/GoBackN.java
+  - java/SelectiveRepeat.java
+
+--------------------------------------------------------------------------------
+EXPERIMENT 05: TCP SOCKET PROGRAMMING (HELLO, FILE TRANSFER, CALCULATOR)
+--------------------------------------------------------------------------------
+Folder : Experiment-05-TCP-Socket-Programming/
+Guides : 
+  - CPP_GUIDE.txt  (C++ POSIX sockets, ports 9001, 9002, 9003, binary file streaming, arithmetic parser, 15+ viva questions)
+  - JAVA_GUIDE.txt (Java ServerSocket & Socket, ports 9001, 9002, 9003, binary file streams, expression evaluator)
+Source :
+  - cpp/hello_server.cpp
+  - cpp/hello_client.cpp
+  - cpp/file_server.cpp
+  - cpp/file_client.cpp
+  - cpp/calculator_server.cpp
+  - cpp/calculator_client.cpp
+  - java/HelloServer.java
+  - java/HelloClient.java
+  - java/FileServer.java
+  - java/FileClient.java
+  - java/CalculatorServer.java
+  - java/CalculatorClient.java
+
+--------------------------------------------------------------------------------
+EXPERIMENT 06: UDP SOCKETS FILE TRANSFER (SCRIPT, TEXT, AUDIO, VIDEO)
+--------------------------------------------------------------------------------
+Folder : Experiment-06-UDP-File-Transfer/
+Guides : 
+  - CPP_GUIDE.txt  (C++ SOCK_DGRAM, Port 9100, chunked binary transfer, usleep pacing delay, EOF marker, 15+ viva questions)
+  - JAVA_GUIDE.txt (Java DatagramSocket & DatagramPacket, Port 9100, binary file chunks, sleep pacing, EOF marker)
+Source :
+  - cpp/udp_file_receiver.cpp
+  - cpp/udp_file_sender.cpp
+  - java/UDPFileReceiver.java
+  - java/UDPFileSender.java
+
+--------------------------------------------------------------------------------
+EXPERIMENT 07: TCP PEER-TO-PEER AND MULTIUSER CHAT
+--------------------------------------------------------------------------------
+Folder : Experiment-07-TCP-Peer-to-Peer-and-Multiuser-Chat/
+Guides : 
+  - CPP_GUIDE.txt  (C++ multithreaded P2P on 9200, Multiuser broadcast on 9201 with std::mutex & vector<ConnectedClient>)
+  - JAVA_GUIDE.txt (Java PeerChat daemon threads, MultiChatServer on 6000 with ConcurrentHashMap.newKeySet & synchronized writer)
+Source :
+  - cpp/p2p_chat.cpp
+  - cpp/multiuser_chat_server.cpp
+  - cpp/multiuser_chat_client.cpp
+  - java/PeerChat.java
+  - java/MultiChatServer.java
+  - java/MultiChatClient.java
+
+--------------------------------------------------------------------------------
+EXPERIMENT 08: UDP PEER-TO-PEER AND MULTIUSER CHAT
+--------------------------------------------------------------------------------
+Folder : Experiment-08-UDP-Peer-to-Peer-and-Multiuser-Chat/
+Guides : 
+  - CPP_GUIDE.txt  (C++ UDP P2P on 9250/9251, UDP Multiuser relay on 9300 with client address tracking & JOIN header)
+  - JAVA_GUIDE.txt (Java UDPP2PChat on 9250/9251, UDPMultiChatServer on 9300 with ConcurrentHashMap<SocketAddress, String>)
+Source :
+  - cpp/udp_p2p_chat.cpp
+  - cpp/udp_multiuser_server.cpp
+  - cpp/udp_multiuser_client.cpp
+  - java/UDPP2PChat.java
+  - java/UDPMultiChatServer.java
+  - java/UDPMultiChatClient.java
+
+--------------------------------------------------------------------------------
+EXPERIMENT 09: APACHE WEB SERVER INSTALLATION AND CONFIGURATION
+--------------------------------------------------------------------------------
+Folder : Experiment-09-Apache-Web-Server/
+Guides : 
+  - EXPERIMENT_GUIDE.txt (Ubuntu apache2 setup, systemctl, document root /var/www/html, nano, ufw, access logs, 15+ viva questions)
+Source : Linux System Administration (`apache2`, `/var/www/html/index.html`).
+
+--------------------------------------------------------------------------------
+EXPERIMENT 10: WIRESHARK PACKET CAPTURE & FILTER EXPRESSIONS
+--------------------------------------------------------------------------------
+Folder : Experiment-10-Wireshark-Packet-Capture/
+Guides : 
+  - EXPERIMENT_GUIDE.txt (BPF capture filters, display filters, TCP 3-way handshake, SYN/PSH/RST flags, TLS HTTPS reality)
+Source : Wireshark Protocol Analyzer (`.pcapng`).
+
+================================================================================

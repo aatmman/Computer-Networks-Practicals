@@ -1,0 +1,477 @@
+================================================================================
+EXPERIMENT 04: GO-BACK-N AND SELECTIVE REPEAT SLIDING WINDOW PROTOCOLS (C++)
+================================================================================
+
+1. EXPERIMENT TITLE AND NUMBER
+--------------------------------------------------------------------------------
+Experiment No. 4: Program to Simulate Go-back-N and Selective Repeat Modes of Sliding Window Protocol.
+
+2. AIM
+--------------------------------------------------------------------------------
+To write, compile, and execute C++ programs that simulate the Go-Back-N (GBN) and Selective Repeat (SR) modes of the sliding window protocol, analyzing sender window behavior, cumulative vs. individual acknowledgments, receiver buffering policies, timeout handling, and comparative retransmission efficiency.
+
+3. REQUIREMENTS
+--------------------------------------------------------------------------------
+- Software: Linux, macOS Darwin, or Windows (MinGW/WSL).
+- Compiler: GCC / Clang C++ Compiler (`g++` or `clang++`) supporting C++11 or later.
+- Tools: Terminal / Command Prompt, Text Editor (VS Code / Vim).
+- Hardware: Standard PC with minimum 1 GHz CPU, 512 MB RAM.
+
+4. LEARNING OBJECTIVES
+--------------------------------------------------------------------------------
+- Master the fundamental concepts of sliding window flow and error control in the Data Link (Layer 2) and Transport (Layer 4) layers.
+- Implement the Go-Back-N ARQ retransmission policy with cumulative acknowledgments and receiver discarding of out-of-order frames.
+- Implement the Selective Repeat ARQ retransmission policy with individual ACKs, out-of-order receiver buffering, and selective frame retransmissions.
+- Understand window size constraints relative to sequence number space:
+  * For Go-Back-N: Window Size N <= 2^m - 1.
+  * For Selective Repeat: Window Size N <= 2^(m - 1).
+- Quantitatively measure and compare bandwidth utilization and retransmission overhead between both protocols under identical frame loss scenarios.
+
+5. THEORY AND IMPORTANT TERMINOLOGY
+--------------------------------------------------------------------------------
+- Sliding Window Protocol: A flow control and reliable transmission technique that allows the sender to transmit multiple data frames (up to window size N) without waiting for an acknowledgment (ACK) for each individual frame, overcoming the low throughput of Stop-and-Wait.
+- Sender Window: The range of consecutive sequence numbers that the sender is authorized to transmit without receiving an ACK. As acknowledgments arrive, the window "slides" forward over higher sequence numbers.
+- Go-Back-N (GBN) ARQ:
+  * Cumulative Acknowledgments: An ACK for frame n (ACK n) implies all frames up to and including n have been successfully received.
+  * Receiver Window Size = 1: The receiver accepts frames only in strict sequential order. If an out-of-order frame arrives (due to a preceding lost or damaged frame), the receiver discards it immediately without buffering.
+  * Retransmission: On sender timeout for frame k, the sender must roll back and retransmit frame k and ALL subsequent frames currently outstanding in the window, even if those subsequent frames originally reached the receiver intact.
+- Selective Repeat (SR) ARQ:
+  * Individual Acknowledgments: Each frame is acknowledged individually.
+  * Receiver Window Size = N: The receiver possesses an internal buffer capable of storing up to N out-of-order but uncorrupted frames.
+  * Retransmission: On sender timeout for frame k, the sender retransmits ONLY frame k. Correctly received out-of-order frames are retained in the receiver's buffer, avoiding redundant retransmissions.
+- Sequence Number Constraints:
+  * If sequence numbers use m bits (range 0 to 2^m - 1):
+  * GBN maximum window size is 2^m - 1 to prevent ambiguity between duplicate ACKs of consecutive cycles.
+  * SR maximum window size is 2^(m - 1) to ensure the sender window and receiver window never overlap across modular sequence numbering cycles.
+
+6. WORKING PRINCIPLE / ALGORITHM
+--------------------------------------------------------------------------------
+Go-Back-N Algorithm:
+1. Initialize `base = 0`, `windowSize = N`, `totalFrames = M`.
+2. While `base < totalFrames`:
+   a. Compute active window bounds: `[base .. min(base + N, totalFrames) - 1]`.
+   b. Transmit all frames in the window.
+   c. If a frame `lostFrame` within the window is simulated as lost:
+      - The receiver receives and drops `lostFrame`.
+      - For all subsequent frames in this window pass, the receiver discards them as out-of-order.
+      - Sender timer expires for `lostFrame`.
+      - Count retransmissions: `retransmissions += (windowEnd - lostFrame)`.
+      - Roll back sender `base` to `lostFrame`.
+      - Mark loss handled (`lostFrame = -1`) so the next pass delivers cleanly.
+   d. If no loss in the window:
+      - All frames acknowledged cumulatively.
+      - Slide window forward: `base = windowEnd`.
+
+Selective Repeat Algorithm:
+1. Initialize `base = 0`, boolean arrays `acked[totalFrames]` and `receiverBuffered[totalFrames]`.
+2. While `base < totalFrames`:
+   a. Compute active window bounds: `[base .. min(base + N, totalFrames) - 1]`.
+   b. Transmit all unacknowledged frames in the window.
+   c. If a frame `lostFrame` within the window is dropped:
+      - Frames arriving after `lostFrame` are buffered by the receiver and individually acknowledged (`acked[i] = true`).
+      - Sender timer expires solely for `lostFrame`.
+      - Retransmit ONLY `lostFrame`: `retransmissions += 1`.
+      - Mark `acked[lostFrame] = true` and `lostFrame = -1`.
+   d. Slide window forward: advance `base` past all consecutively acknowledged frames.
+
+7. NETWORK FLOW DIAGRAM
+--------------------------------------------------------------------------------
+Comparison of Loss Handling (Window = 4, Frame 2 Lost):
+
+```
+Go-Back-N (GBN):                          Selective Repeat (SR):
+  Sender               Receiver             Sender               Receiver
+    |--- Frame 0 --------->| (ACK 0)           |--- Frame 0 --------->| (ACK 0)
+    |--- Frame 1 --------->| (ACK 1)           |--- Frame 1 --------->| (ACK 1)
+    |--- Frame 2 ---X      | (LOST)            |--- Frame 2 ---X      | (LOST)
+    |--- Frame 3 --------->| (DISCARDED!)      |--- Frame 3 --------->| (BUFFERED & ACK 3)
+    |                      |                   |                      |
+ [Timeout Frame 2]                             [Timeout Frame 2]
+    |                                          |
+ [ROLL BACK TO 2]                              [RETRANSMIT ONLY 2]
+    |--- Frame 2 --------->| (ACK 2)           |--- Frame 2 --------->| (ACK 2)
+    |--- Frame 3 --------->| (ACK 3)           |                      | [Deliver 2 & 3]
+    v                      v                   v                      v
+  (2 frames retransmitted: 2 & 3)            (1 frame retransmitted: 2 only)
+```
+
+8. COMPLETE SOURCE CODE (C++)
+--------------------------------------------------------------------------------
+This experiment includes two distinct programs saved in `Experiment-04-Sliding-Window-GBN-SR/cpp/`:
+1. `go_back_n.cpp`
+2. `selective_repeat.cpp`
+
+--- File: go_back_n.cpp ---
+```cpp
+#include <iostream>
+#include <vector>
+#include <algorithm>
+
+using namespace std;
+
+int main() {
+    cout << "========================================================\n";
+    cout << "    GO-BACK-N (GBN) SLIDING WINDOW ARQ SIMULATION - C++ \n";
+    cout << "========================================================\n";
+
+    int totalFrames, windowSize, lostFrame;
+    cout << "Enter total number of frames to send: ";
+    if (!(cin >> totalFrames) || totalFrames <= 0) {
+        cerr << "Error: Total frames must be a positive integer.\n";
+        return 1;
+    }
+
+    cout << "Enter sliding window size (N): ";
+    if (!(cin >> windowSize) || windowSize <= 0) {
+        cerr << "Error: Window size must be a positive integer.\n";
+        return 1;
+    }
+
+    cout << "Enter frame index to simulate as LOST (0-indexed, or -1 for none): ";
+    cin >> lostFrame;
+
+    int base = 0;
+    int retransmissions = 0;
+    int passNumber = 1;
+
+    cout << "\nStarting Go-Back-N Simulation...\n";
+    cout << "Window Size (N) = " << windowSize << ", Total Frames = " << totalFrames << "\n";
+
+    while (base < totalFrames) {
+        int windowEnd = min(base + windowSize, totalFrames);
+        cout << "\n[Pass " << passNumber++ << "] Active Window: [" << base << " .. " << windowEnd - 1 << "]\n";
+        cout << "  Sender transmitting frames " << base << " through " << windowEnd - 1 << "...\n";
+
+        bool lossOccurred = false;
+        int firstLostInThisPass = -1;
+
+        for (int i = base; i < windowEnd; i++) {
+            if (i == lostFrame) {
+                cout << "    -> Frame " << i << " : [DROPPED / LOST IN TRANSIT]\n";
+                lossOccurred = true;
+                firstLostInThisPass = i;
+                // In Go-Back-N, receiver discards all subsequent out-of-order frames
+                for (int j = i + 1; j < windowEnd; j++) {
+                    cout << "    -> Frame " << j << " : [ARRIVED OUT-OF-ORDER - DISCARDED BY RECEIVER]\n";
+                }
+                break;
+            } else {
+                cout << "    -> Frame " << i << " : [RECEIVED & CUMULATIVE ACK SENT]\n";
+            }
+        }
+
+        if (lossOccurred) {
+            cout << "  [TIMEOUT] Timer expired for unacknowledged Frame " << firstLostInThisPass << "!\n";
+            cout << "  [GO-BACK-N ACTION] Sender rolls window back to Frame " << firstLostInThisPass << ".\n";
+            int framesToRetransmit = windowEnd - firstLostInThisPass;
+            cout << "  Retransmitting " << framesToRetransmit << " frame(s): ";
+            for (int r = firstLostInThisPass; r < windowEnd; r++) {
+                cout << r << (r == windowEnd - 1 ? "" : ", ");
+            }
+            cout << "\n";
+            retransmissions += framesToRetransmit;
+
+            // Reset lostFrame so it successfully delivers upon retransmission
+            lostFrame = -1;
+            // Roll back sender base to the lost frame
+            base = firstLostInThisPass;
+        } else {
+            cout << "  All frames in window [" << base << " .. " << windowEnd - 1 << "] acknowledged successfully.\n";
+            base = windowEnd; // Slide window forward
+        }
+    }
+
+    cout << "\n========================================================\n";
+    cout << "SIMULATION COMPLETE\n";
+    cout << "Total Frames Successfully Transmitted : " << totalFrames << "\n";
+    cout << "Total Retransmissions in Go-Back-N     : " << retransmissions << "\n";
+    cout << "Total Frame Transmissions (Original+Retx): " << totalFrames + retransmissions << "\n";
+    cout << "========================================================\n";
+
+    return 0;
+}
+```
+
+--- File: selective_repeat.cpp ---
+```cpp
+#include <iostream>
+#include <vector>
+#include <set>
+#include <algorithm>
+
+using namespace std;
+
+int main() {
+    cout << "========================================================\n";
+    cout << "  SELECTIVE REPEAT (SR) SLIDING WINDOW ARQ SIMULATION - C++\n";
+    cout << "========================================================\n";
+
+    int totalFrames, windowSize, lostFrame;
+    cout << "Enter total number of frames to send: ";
+    if (!(cin >> totalFrames) || totalFrames <= 0) {
+        cerr << "Error: Total frames must be a positive integer.\n";
+        return 1;
+    }
+
+    cout << "Enter sliding window size (N): ";
+    if (!(cin >> windowSize) || windowSize <= 0) {
+        cerr << "Error: Window size must be a positive integer.\n";
+        return 1;
+    }
+
+    cout << "Enter frame index to simulate as LOST (0-indexed, or -1 for none): ";
+    cin >> lostFrame;
+
+    vector<bool> acked(totalFrames, false);
+    vector<bool> receiverBuffered(totalFrames, false);
+    int retransmissions = 0;
+    int base = 0;
+    int passNumber = 1;
+
+    cout << "\nStarting Selective Repeat Simulation...\n";
+    cout << "Window Size (N) = " << windowSize << ", Total Frames = " << totalFrames << "\n";
+
+    while (base < totalFrames) {
+        int windowEnd = min(base + windowSize, totalFrames);
+        cout << "\n[Pass " << passNumber++ << "] Active Window: [" << base << " .. " << windowEnd - 1 << "]\n";
+        cout << "  Sender transmitting unacknowledged frames in window...\n";
+
+        bool lossOccurred = false;
+
+        for (int i = base; i < windowEnd; i++) {
+            if (acked[i]) {
+                cout << "    -> Frame " << i << " : [ALREADY ACKNOWLEDGED - SKIPPED]\n";
+                continue;
+            }
+
+            if (i == lostFrame) {
+                cout << "    -> Frame " << i << " : [DROPPED / LOST IN TRANSIT]\n";
+                lossOccurred = true;
+            } else {
+                acked[i] = true;
+                receiverBuffered[i] = true;
+                cout << "    -> Frame " << i << " : [RECEIVED & BUFFERED OUT-OF-ORDER BY RECEIVER -> INDIVIDUAL ACK SENT]\n";
+            }
+        }
+
+        if (lossOccurred) {
+            cout << "  [TIMEOUT] Timer expired ONLY for unacknowledged Frame " << lostFrame << "!\n";
+            cout << "  [SELECTIVE REPEAT ACTION] Retransmitting ONLY Frame " << lostFrame << "...\n";
+            cout << "    -> Frame " << lostFrame << " : [RETRANSMITTED SUCCESSFULLY -> ACK RECEIVED]\n";
+            acked[lostFrame] = true;
+            receiverBuffered[lostFrame] = true;
+            retransmissions++;
+            lostFrame = -1; // Loss handled
+        }
+
+        // Slide the window forward past all consecutively acknowledged frames
+        int oldBase = base;
+        while (base < totalFrames && acked[base]) {
+            base++;
+        }
+        cout << "  Receiver delivered in-order frames up to " << base - 1 << ".\n";
+        cout << "  Window slid forward by " << (base - oldBase) << " position(s). New base = " << base << "\n";
+    }
+
+    cout << "\n========================================================\n";
+    cout << "SIMULATION COMPLETE\n";
+    cout << "Total Frames Successfully Transmitted : " << totalFrames << "\n";
+    cout << "Total Retransmissions in Selective Repeat : " << retransmissions << "\n";
+    cout << "Total Frame Transmissions (Original+Retx): " << totalFrames + retransmissions << "\n";
+    cout << "========================================================\n";
+
+    return 0;
+}
+```
+
+9. EXPLANATION OF THE CODE
+--------------------------------------------------------------------------------
+- In `go_back_n.cpp`:
+  * `base`: Points to the lowest unacknowledged frame index.
+  * When `i == lostFrame`, subsequent frames in that pass are explicitly noted as discarded by the receiver, accurately simulating receiver window size = 1.
+  * On timeout, `base` is rolled back to `firstLostInThisPass`, and the sender re-executes transmission from that frame forward.
+- In `selective_repeat.cpp`:
+  * `vector<bool> acked` and `vector<bool> receiverBuffered`: Track individual frame reception and out-of-order buffering at the receiver.
+  * When `lostFrame` fails, frames transmitted after it are individually acknowledged and stored in `receiverBuffered`.
+  * Retransmission targets strictly `lostFrame` (`retransmissions++`), leaving already ACKed frames undisturbed.
+  * The window slides forward past all consecutive ACKs using `while (base < totalFrames && acked[base]) base++`.
+
+10. SETUP AND INSTALLATION INSTRUCTIONS
+--------------------------------------------------------------------------------
+1. Navigate to the cpp folder:
+   `cd Experiment-04-Sliding-Window-GBN-SR/cpp`
+2. Ensure `g++` is installed.
+
+11. EXACT COMPILE/RUN COMMANDS
+--------------------------------------------------------------------------------
+Compile:
+`g++ -std=c++17 -Wall -Wextra go_back_n.cpp -o gbn`
+`g++ -std=c++17 -Wall -Wextra selective_repeat.cpp -o sr`
+
+Run:
+`./gbn`
+`./sr`
+
+12. EXECUTION ORDER
+--------------------------------------------------------------------------------
+1. Compile both source files.
+2. Run `./gbn` first with parameters (e.g., 8 frames, window 4, lost frame 2).
+3. Run `./sr` with the exact same parameters.
+4. Compare the retransmission count and sliding window steps.
+
+13. SAMPLE INPUT AND EXPECTED OUTPUT
+--------------------------------------------------------------------------------
+Input to both programs:
+Total frames: `8`
+Window size: `4`
+Lost frame: `2`
+
+Go-Back-N Output:
+```
+[Pass 1] Active Window: [0 .. 3]
+  Sender transmitting frames 0 through 3...
+    -> Frame 0 : [RECEIVED & CUMULATIVE ACK SENT]
+    -> Frame 1 : [RECEIVED & CUMULATIVE ACK SENT]
+    -> Frame 2 : [DROPPED / LOST IN TRANSIT]
+    -> Frame 3 : [ARRIVED OUT-OF-ORDER - DISCARDED BY RECEIVER]
+  [TIMEOUT] Timer expired for unacknowledged Frame 2!
+  [GO-BACK-N ACTION] Sender rolls window back to Frame 2.
+  Retransmitting 2 frame(s): 2, 3
+
+[Pass 2] Active Window: [2 .. 5]
+  Sender transmitting frames 2 through 5...
+    -> Frame 2 : [RECEIVED & CUMULATIVE ACK SENT]
+    -> Frame 3 : [RECEIVED & CUMULATIVE ACK SENT]
+    -> Frame 4 : [RECEIVED & CUMULATIVE ACK SENT]
+    -> Frame 5 : [RECEIVED & CUMULATIVE ACK SENT]
+  All frames in window [2 .. 5] acknowledged successfully.
+
+[Pass 3] Active Window: [6 .. 7]
+  Sender transmitting frames 6 through 7...
+    -> Frame 6 : [RECEIVED & CUMULATIVE ACK SENT]
+    -> Frame 7 : [RECEIVED & CUMULATIVE ACK SENT]
+  All frames in window [6 .. 7] acknowledged successfully.
+
+SIMULATION COMPLETE
+Total Frames Successfully Transmitted : 8
+Total Retransmissions in Go-Back-N     : 2
+Total Frame Transmissions (Original+Retx): 10
+```
+
+Selective Repeat Output:
+```
+[Pass 1] Active Window: [0 .. 3]
+  Sender transmitting unacknowledged frames in window...
+    -> Frame 0 : [RECEIVED & BUFFERED OUT-OF-ORDER BY RECEIVER -> INDIVIDUAL ACK SENT]
+    -> Frame 1 : [RECEIVED & BUFFERED OUT-OF-ORDER BY RECEIVER -> INDIVIDUAL ACK SENT]
+    -> Frame 2 : [DROPPED / LOST IN TRANSIT]
+    -> Frame 3 : [RECEIVED & BUFFERED OUT-OF-ORDER BY RECEIVER -> INDIVIDUAL ACK SENT]
+  [TIMEOUT] Timer expired ONLY for unacknowledged Frame 2!
+  [SELECTIVE REPEAT ACTION] Retransmitting ONLY Frame 2...
+    -> Frame 2 : [RETRANSMITTED SUCCESSFULLY -> ACK RECEIVED]
+  Receiver delivered in-order frames up to 3.
+  Window slid forward by 4 position(s). New base = 4
+
+[Pass 2] Active Window: [4 .. 7]
+  Sender transmitting unacknowledged frames in window...
+    -> Frame 4 : [RECEIVED & BUFFERED OUT-OF-ORDER BY RECEIVER -> INDIVIDUAL ACK SENT]
+    -> Frame 5 : [RECEIVED & BUFFERED OUT-OF-ORDER BY RECEIVER -> INDIVIDUAL ACK SENT]
+    -> Frame 6 : [RECEIVED & BUFFERED OUT-OF-ORDER BY RECEIVER -> INDIVIDUAL ACK SENT]
+    -> Frame 7 : [RECEIVED & BUFFERED OUT-OF-ORDER BY RECEIVER -> INDIVIDUAL ACK SENT]
+  Receiver delivered in-order frames up to 7.
+  Window slid forward by 4 position(s). New base = 8
+
+SIMULATION COMPLETE
+Total Frames Successfully Transmitted : 8
+Total Retransmissions in Selective Repeat : 1
+Total Frame Transmissions (Original+Retx): 9
+```
+
+14. HOW TO TEST AND VERIFY THE RESULT
+--------------------------------------------------------------------------------
+Execute automated comparative verification:
+`printf "8\n4\n2\n" | ./gbn`
+`printf "8\n4\n2\n" | ./sr`
+Notice that for Frame 2 loss, Go-Back-N retransmitted 2 frames (2 and 3), while Selective Repeat retransmitted only 1 frame (Frame 2).
+
+15. COMMON ERRORS AND TROUBLESHOOTING
+--------------------------------------------------------------------------------
+1. Frame indexing: Frame index to lose must be between `0` and `totalFrames - 1`. If out of range, no loss occurs.
+2. Window boundary overflow: Handled via `min(base + windowSize, totalFrames)`.
+
+16. MANUAL CODE NOTE / CORRECTION / ENHANCEMENT
+--------------------------------------------------------------------------------
+- CRITICAL LAB MANUAL BUG NOTE:
+  In the official lab manual's sample code for `go_back_n.cpp`, the rollback logic contained contradictory statements:
+  ```cpp
+  base = lostFrame;    // placeholder, corrected below
+  base = base;         // (kept for clarity of GBN restart point)
+  base = windowEnd - (windowEnd - lostFrame >= 0 ? 0 : 0);
+  base = windowEnd;    // <-- BUG: unconditionally advances base, skipping retransmission!
+  ```
+  Because `base = windowEnd;` was executed unconditionally at the end of the loop, the manual's sample code never actually rolled back to retransmit the lost frames in the subsequent iteration!
+  In our corrected code, when a loss occurs, `base` is correctly rolled back to `firstLostInThisPass`, and window sliding (`base = windowEnd`) only executes when all frames in the window have been acknowledged without loss.
+
+17. VIVA QUESTIONS WITH CONCISE, CORRECT ANSWERS
+--------------------------------------------------------------------------------
+Q1: What is the main operational difference between Go-Back-N and Selective Repeat?
+A: GBN discards out-of-order frames and retransmits all frames from the lost frame onward; SR buffers out-of-order frames and retransmits only the lost frame.
+
+Q2: What is the receiver window size in Go-Back-N?
+A: Exactly 1. The receiver only accepts the expected sequence number.
+
+Q3: What is the receiver window size in Selective Repeat?
+A: Equal to the sender window size N (up to 2^(m - 1)).
+
+Q4: What type of acknowledgment does Go-Back-N use?
+A: Cumulative ACKs, where ACK n confirms receipt of all frames up to n.
+
+Q5: What type of acknowledgment does Selective Repeat use?
+A: Individual ACKs (or Selective ACKs / SACK), acknowledging each received frame separately.
+
+Q6: For an m-bit sequence number space, what is the maximum window size in Go-Back-N?
+A: 2^m - 1.
+
+Q7: For an m-bit sequence number space, what is the maximum window size in Selective Repeat?
+A: 2^(m - 1) (half the sequence number space).
+
+Q8: Why can't the window size in Selective Repeat exceed 2^(m - 1)?
+A: To prevent overlapping between the current receiver window and the next cycle's sender window, which would cause duplicate frames to be mistaken for new frames.
+
+Q9: What happens in Go-Back-N if an intermediate ACK is lost in transit?
+A: If a subsequent ACK arrives (e.g., ACK 3 after ACK 2 is lost), cumulative acknowledgment automatically covers the earlier frames without triggering retransmission.
+
+Q10: Which protocol requires more memory buffers at the receiver?
+A: Selective Repeat, because it must store out-of-order frames until missing frames arrive to deliver them in sequence.
+
+Q11: Under what network condition is Go-Back-N acceptable despite its inefficiency?
+A: On links with very low error rates and small propagation delays, where retransmissions are rare and protocol simplicity is prioritized.
+
+Q12: Under what condition is Selective Repeat clearly superior?
+A: On high-latency, high-bandwidth-delay product links with noisy channels (e.g., satellite links), where retransmitting entire windows wastes substantial bandwidth.
+
+Q13: What triggers frame retransmission in both protocols?
+A: Expiration of a retransmission timer associated with an unacknowledged frame.
+
+Q14: How does TCP implement sliding window reliability?
+A: Modern TCP uses a hybrid: cumulative ACKs with Selective Acknowledgment (SACK, RFC 2018) similar to Selective Repeat.
+
+Q15: What is piggybacking in sliding window protocols?
+A: Temporarily delaying an outgoing ACK so it can be combined with outgoing data payload in a single frame.
+
+18. 30–60 SECOND EXPLANATION FOR THE EXAMINER
+--------------------------------------------------------------------------------
+"In this experiment, I simulated the Go-Back-N and Selective Repeat sliding window protocols in C++. In Go-Back-N, the receiver has a window size of 1 and discards out-of-order frames. When Frame 2 was lost in a window of 4, the sender timed out and retransmitted all frames from 2 through 3. In Selective Repeat, the receiver has a window equal to sender window N, buffers out-of-order Frame 3, and returns an individual ACK. On timeout, the sender retransmitted only Frame 2, demonstrating how Selective Repeat minimizes retransmissions at the cost of receiver buffer complexity."
+
+19. QUICK REVISION POINTS
+--------------------------------------------------------------------------------
+- GBN: Receiver window = 1; cumulative ACK; discards out-of-order; retransmits N frames; Max N = 2^m - 1.
+- SR: Receiver window = N; individual ACK; buffers out-of-order; retransmits 1 frame; Max N = 2^(m - 1).
+- Efficiency: SR uses fewer retransmissions and less bandwidth over noisy links.
+- Complexity: SR requires receiver sorting/buffering and per-frame timers.
+
+20. RESULT / CONCLUSION
+--------------------------------------------------------------------------------
+Go-Back-N and Selective Repeat ARQ protocols were successfully simulated and compared in C++. The simulation clearly demonstrated the retransmission reduction achieved by Selective Repeat over Go-Back-N when handling lost frames.
+TEST STATUS: Tested successfully on macOS (Apple clang C++17, arm64).
+================================================================================

@@ -1,0 +1,360 @@
+================================================================================
+EXPERIMENT 09: INSTALLATION AND CONFIGURATION OF WEB SERVER (APACHE)
+================================================================================
+
+1. EXPERIMENT TITLE AND NUMBER
+--------------------------------------------------------------------------------
+Experiment No. 9: Installation and Configuration of Web Server (Client-Server based).
+
+2. AIM
+--------------------------------------------------------------------------------
+To install, configure, secure, and verify the Apache HTTP Server (apache2) on an Ubuntu/Debian Linux system, configure its default document root, deploy a custom HTML webpage, and verify client-server HTTP communication locally (via browser and `curl`) and across the local area network (LAN) from a remote machine.
+
+3. REQUIREMENTS
+--------------------------------------------------------------------------------
+Hardware Requirements:
+- A PC or Virtual Machine running Ubuntu/Debian Linux (Ubuntu 20.04/22.04/24.04 LTS or WSL2) acting as the Web Server.
+- A second PC, Laptop, or Smartphone connected to the same Local Area Network (Wi-Fi or Ethernet) acting as the Client.
+- Network interface with an allocated IPv4 address.
+
+Software Requirements:
+- Operating System: Ubuntu Linux (or Debian, WSL2, or macOS/XAMPP alternative).
+- Package Manager: `apt`.
+- Web Server Software: Apache HTTP Server (`apache2`).
+- Text Editor: `nano` or `vim`.
+- Testing Tools: Web Browser (Chrome, Firefox, Safari) and command-line HTTP utility (`curl`).
+- System Privileges: Superuser privileges (`sudo`).
+
+4. LEARNING OBJECTIVES
+--------------------------------------------------------------------------------
+- Understand the client-server architecture of the World Wide Web operating over the Hypertext Transfer Protocol (HTTP).
+- Install and administer system daemon services using `systemctl` on modern Linux distributions.
+- Understand the role of Document Root (`/var/www/html`) in web hosting.
+- Inspect and interpret HTTP request methods (GET, POST), headers, and status codes (200 OK, 404 Not Found, 403 Forbidden).
+- Configure firewall rules using Uncomplicated Firewall (`ufw`) to expose only necessary HTTP/HTTPS ports.
+- Identify server IP addressing (`ip addr`, `hostname -I`) and verify cross-network access over a Local Area Network.
+- Inspect Apache server logs (`access.log` and `error.log`) for diagnostic auditing.
+
+5. THEORY AND IMPORTANT TERMINOLOGY
+--------------------------------------------------------------------------------
+- Web Server: An application software (Layer 7) that listens for incoming HTTP/HTTPS requests from clients (web browsers), processes them, and returns requested static web resources (HTML, CSS, JS, images) or dynamically generated content.
+- Client-Server HTTP Communication:
+  1. Client enters `http://<server-ip>/` in a web browser.
+  2. Browser establishes a TCP connection to the server on port 80 (or port 443 for HTTPS).
+  3. Client transmits an HTTP Request Line and Headers:
+     `GET / HTTP/1.1`
+     `Host: 192.168.1.10`
+  4. Apache parses the request, maps the URI `/` to the physical document root `/var/www/html/index.html`.
+  5. Apache transmits an HTTP Response with status header and HTML payload:
+     `HTTP/1.1 200 OK`
+     `Content-Type: text/html`
+     `Content-Length: 1250`
+     `[HTML Body content]`
+  6. Browser renders the HTML code visually for the user.
+- Document Root: The designated top-level directory in the server's local filesystem from which public files are served. For Apache on Debian/Ubuntu, this is `/var/www/html/`.
+- Systemd / Systemctl: The init system and service manager in Linux used to start, stop, restart, enable, and inspect system daemons.
+- Access Log vs. Error Log:
+  * Access Log (`/var/log/apache2/access.log`): Records every single HTTP request received, including client IP, timestamp, HTTP method, requested URI, status code, and user agent.
+  * Error Log (`/var/log/apache2/error.log`): Records server diagnostics, startup messages, and error conditions (such as missing files, syntax errors, or permission denied issues).
+
+6. NETWORK TOPOLOGY / ARCHITECTURE DIAGRAM
+--------------------------------------------------------------------------------
+```
+     +-------------------------------------------------------+
+     |                 CLIENT WORKSTATION                    |
+     |  Web Browser (Chrome / Firefox) / CLI (curl)          |
+     |  IP: 192.168.1.50                                     |
+     +---------------------------+---------------------------+
+                                 |
+                                 | HTTP Request: GET / HTTP/1.1
+                                 | Destination: 192.168.1.10:80
+                                 v
+          ================ [ Local Area Network (LAN) ] ================
+                                 |
+                                 v
+     +---------------------------+---------------------------+
+     |                  APACHE WEB SERVER                    |
+     |  Server Host: 192.168.1.10                            |
+     |                                                       |
+     |  [UFW Firewall] -> Allows Inbound Port 80 (Apache)   |
+     |                                                       |
+     |  [Apache2 Daemon] Listening on 0.0.0.0:80             |
+     |         |                                             |
+     |         | Maps URI "/" to:                            |
+     |         v                                             |
+     |  [Document Root: /var/www/html/]                      |
+     |  - index.html (Custom college department page)        |
+     |                                                       |
+     |  [Logs]                                               |
+     |  - /var/log/apache2/access.log                        |
+     |  - /var/log/apache2/error.log                         |
+     +-------------------------------------------------------+
+```
+
+7. ADDRESSING AND CONFIGURATION TABLE
+--------------------------------------------------------------------------------
+Component              Value / Path                         Description
+-------------------------------------------------------------------------------------------------
+Server IP Address      e.g. 192.168.1.10 (Static or DHCP)   Assigned LAN IP of the Ubuntu Server
+Client IP Address      e.g. 192.168.1.50                    Client machine on the same LAN subnet
+HTTP Port              TCP Port 80                          Default unencrypted web communication
+HTTPS Port             TCP Port 443                         Default SSL/TLS encrypted communication
+Document Root          /var/www/html/                       Default web publishing directory
+Default Landing File   /var/www/html/index.html             Served when client accesses root "/"
+Main Config File       /etc/apache2/apache2.conf            Primary Apache global configuration
+Virtual Host Config    /etc/apache2/sites-available/000-default.conf Default Virtual Host file
+Access Log Path        /var/log/apache2/access.log          Log of all incoming client HTTP hits
+Error Log Path         /var/log/apache2/error.log           Log of server operational warnings/errors
+
+8. STEP-BY-STEP SETUP PROCEDURE (BEGINNER-FRIENDLY GUIDE)
+--------------------------------------------------------------------------------
+Step 1: Update Linux Package Index and Install Apache
+Open your Ubuntu Linux terminal and execute:
+```bash
+sudo apt update
+sudo apt install apache2 -y
+```
+- Explanation: `sudo apt update` refreshes the list of available packages and versions. `sudo apt install apache2` downloads and installs the Apache web server and its required dependencies.
+
+Step 2: Control and Verify Apache Service Status
+Manage the Apache background service using `systemctl`:
+```bash
+# Check service status:
+sudo systemctl status apache2
+
+# If not running, start the service:
+sudo systemctl start apache2
+
+# Configure Apache to automatically start on every system boot:
+sudo systemctl enable apache2
+```
+- Explanation: In the output of `systemctl status`, look for `Active: active (running)` in green text.
+
+Step 3: Configure the Firewall (UFW)
+Modern Ubuntu systems use `ufw` (Uncomplicated Firewall). Expose only the required web ports:
+```bash
+# View available UFW application profiles:
+sudo ufw app list
+
+# Allow standard HTTP traffic (Port 80):
+sudo ufw allow 'Apache'
+
+# (Or allow both HTTP and HTTPS using: sudo ufw allow 'Apache Full')
+
+# Verify firewall status:
+sudo ufw status
+```
+- Output should confirm: `Apache  ALLOW  Anywhere`.
+
+Step 4: Verify Local Server Operation via Browser and `curl`
+Test that Apache is answering requests on the local host:
+1. In the terminal:
+   `curl -I http://localhost`
+   Expected response starts with `HTTP/1.1 200 OK`.
+2. Open a web browser on the Ubuntu machine and navigate to:
+   `http://localhost` or `http://127.0.0.1`
+   You will see the default "Apache2 Ubuntu Default Page".
+
+Step 5: Create and Deploy a Custom `index.html` Page
+Replace the default page with your own college department page:
+1. Navigate to the document root:
+   `cd /var/www/html`
+2. Back up the original default page:
+   `sudo mv index.html index.html.backup`
+3. Create a new custom landing page using the `nano` text editor:
+   `sudo nano index.html`
+4. Type or paste the following HTML code:
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Computer Networks Laboratory Web Server</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f4f6f9; color: #333; margin: 40px; }
+        .card { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 700px; margin: auto; }
+        h1 { color: #0056b3; }
+        .status { background: #e8f5e9; color: #2e7d32; padding: 10px 15px; border-radius: 4px; font-weight: bold; }
+        ul { line-height: 1.8; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Welcome to the Computer Networks Lab Web Server</h1>
+        <p class="status">Status: Active & Serving HTTP on Port 80</p>
+        <p>This web server was successfully configured during Experiment 9.</p>
+        <h3>Server Details:</h3>
+        <ul>
+            <li><strong>Software:</strong> Apache HTTP Server (apache2)</li>
+            <li><strong>Document Root:</strong> /var/www/html/</li>
+            <li><strong>Protocol:</strong> HTTP/1.1 over TCP</li>
+        </ul>
+        <hr>
+        <p><em>Department of Computer Engineering</em></p>
+    </div>
+</body>
+</html>
+```
+5. Save and exit nano: Press `Ctrl + O` -> Enter, then `Ctrl + X`.
+6. Refresh `http://localhost` in your browser. Your new page is rendered immediately!
+
+Step 6: Determine Server's LAN IP Address
+To access the server from another machine on the LAN, determine the server's private IPv4 address:
+```bash
+hostname -I
+```
+Or use:
+```bash
+ip addr show
+```
+- Example output: `192.168.1.10`.
+
+Step 7: Verify Access from Another Machine on the LAN
+1. On a second machine (laptop, phone, or another lab PC connected to the same Wi-Fi/switch), open a web browser.
+2. Enter the server's IP in the URL address bar:
+   `http://192.168.1.10/`
+3. The custom page will load successfully across the local area network, verifying client-server communication!
+
+Step 8: Inspect Apache Server Logs
+Observe real-time incoming web traffic as clients connect:
+```bash
+# Watch the access log in real time:
+sudo tail -f /var/log/apache2/access.log
+
+# Inspect recent server errors:
+sudo tail -n 20 /var/log/apache2/error.log
+```
+- Refresh the browser on your phone/laptop. Observe a new log line appearing in the terminal showing your client IP, timestamp, `GET / HTTP/1.1`, and status code `200`.
+
+9. IMPORTANT APACHE PATHS, LOGS, AND COMMANDS SUMMARY
+--------------------------------------------------------------------------------
+Command / Path                          Purpose
+-------------------------------------------------------------------------------------------------
+`sudo systemctl start apache2`          Start the Apache service
+`sudo systemctl stop apache2`           Stop the Apache service
+`sudo systemctl restart apache2`        Restart the Apache service (applies configuration changes)
+`sudo systemctl reload apache2`         Reload configuration without dropping active connections
+`sudo systemctl status apache2`         Inspect current service status
+`sudo apache2ctl configtest`            Test configuration syntax for syntax errors (`Syntax OK`)
+`/var/www/html/`                        Default document root directory for public web files
+`/etc/apache2/apache2.conf`             Primary Apache global configuration file
+`/etc/apache2/ports.conf`               Specifies listening ports (default: 80 and 443)
+`/var/log/apache2/access.log`           Client access log (HTTP hits)
+`/var/log/apache2/error.log`            Server diagnostic error log
+
+10. EXPECTED RESULTS / SAMPLE OUTPUT
+--------------------------------------------------------------------------------
+Sample `curl -I http://localhost` output:
+```http
+HTTP/1.1 200 OK
+Date: Wed, 05 Nov 2026 10:00:00 GMT
+Server: Apache/2.4.58 (Ubuntu)
+Last-Modified: Wed, 05 Nov 2026 09:55:00 GMT
+ETag: "4e2-626a5789b1240"
+Accept-Ranges: bytes
+Content-Length: 1250
+Vary: Accept-Encoding
+Content-Type: text/html
+```
+
+Sample `/var/log/apache2/access.log` entry:
+```
+192.168.1.50 - - [05/Nov/2026:10:02:15 +0530] "GET / HTTP/1.1" 200 1250 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+```
+
+11. COMMON ERRORS AND TROUBLESHOOTING
+--------------------------------------------------------------------------------
+1. Problem: `Job for apache2.service failed because the control process exited with error code`.
+   Cause: Port 80 is already in use by another web server (such as Nginx, lighttpd, or Skype), or a syntax error exists in configuration.
+   Fix:
+   - Run `sudo apache2ctl configtest` to check for syntax errors.
+   - Run `sudo lsof -i :80` or `sudo netstat -tulpn | grep :80` to find the conflicting process. Stop it with `sudo systemctl stop <conflicting_service>`.
+2. Problem: Remote client cannot access page (`This site can't be reached` / Connection Timed Out).
+   Cause: UFW firewall or cloud security group is blocking port 80, or client and server are on different subnets/isolated Wi-Fi APs.
+   Fix: Run `sudo ufw allow 'Apache'` on server. Verify client can ping the server IP. Ensure "AP Client Isolation" is disabled on the lab Wi-Fi router.
+3. Problem: HTTP 403 Forbidden error displayed in browser.
+   Cause: File permissions on `/var/www/html/index.html` prevent the `www-data` user from reading the file.
+   Fix: Run `sudo chmod 644 /var/www/html/index.html` and `sudo chown www-data:www-data /var/www/html/index.html`.
+4. Problem: HTTP 404 Not Found error.
+   Cause: The requested file does not exist in `/var/www/html/`, or was misspelled (e.g., `Index.html` with capital 'I' on case-sensitive Linux filesystems).
+   Fix: Verify filename is exactly `index.html` in lowercase in `/var/www/html/`.
+
+12. WSL2 NOTES AND XAMPP ALTERNATIVE
+--------------------------------------------------------------------------------
+- Running in Windows Subsystem for Linux 2 (WSL2):
+  * WSL2 uses a virtualized network adapter. Accessing `http://localhost` from Windows works because WSL2 automatically forwards localhost ports.
+  * Accessing WSL2 Apache from *another* LAN machine requires configuring Windows port forwarding via PowerShell:
+    `netsh interface portproxy add v4tov4 listenport=80 listenaddress=0.0.0.0 connectport=80 connectaddress=<wsl2_internal_ip>`
+- XAMPP Alternative (Windows / macOS GUI):
+  * Download and install XAMPP from Apache Friends.
+  * Launch the XAMPP Control Panel and click "Start" next to Apache.
+  * Document Root: `C:\xampp\htdocs\` (Windows) or `/Applications/XAMPP/xamppfiles/htdocs/` (macOS).
+  * Place `index.html` inside `htdocs`.
+  * Note for Examination: Clearly specify whether you used native Ubuntu Apache (`apt install apache2`) or the XAMPP bundled package. The lab manual officially demonstrates native Apache on Linux.
+
+13. VIVA QUESTIONS WITH CONCISE, CORRECT ANSWERS
+--------------------------------------------------------------------------------
+Q1: What is the primary role of a web server?
+A: To listen for incoming HTTP/HTTPS requests from clients, process URLs, and serve the requested web content (HTML, CSS, JS, media).
+
+Q2: What is the default port for HTTP, and for HTTPS?
+A: HTTP uses TCP port 80; HTTPS uses TCP port 443 (secured via TLS/SSL).
+
+Q3: What is the default document root for Apache on Ubuntu/Debian?
+A: `/var/www/html/`.
+
+Q4: What file does Apache serve automatically when a client requests the root URL?
+A: `index.html` (or `index.php` if PHP module is enabled).
+
+Q5: What command tests Apache configuration syntax for errors?
+A: `sudo apache2ctl configtest` (returns `Syntax OK` if valid).
+
+Q6: What is the purpose of `sudo systemctl enable apache2`?
+A: It configures the Apache service to automatically launch at system startup/boot.
+
+Q7: What is the difference between `systemctl reload` and `systemctl restart`?
+A: `reload` re-reads configuration files without terminating active client connections; `restart` completely stops and restarts the service process.
+
+Q8: What information is recorded in `/var/log/apache2/access.log`?
+A: Client IP address, request timestamp, HTTP request method (GET/POST), URI path, HTTP status code, response byte size, and client user-agent string.
+
+Q9: What does an HTTP 200 status code mean?
+A: OK; the request was successful and the server returned the requested resource.
+
+Q10: What does an HTTP 404 status code mean?
+A: Not Found; the server could not find the requested resource at the specified URI.
+
+Q11: What does an HTTP 403 status code mean?
+A: Forbidden; the server understood the request but refuses to authorize access (commonly due to file permission restrictions).
+
+Q12: What command displays the listening ports of Apache?
+A: `sudo ss -tulpn | grep :80` or `sudo netstat -tulpn | grep apache2`.
+
+Q13: How does the UFW firewall command `sudo ufw allow 'Apache'` secure the system?
+A: It specifically opens TCP port 80 while keeping all other unused ports blocked, adhering to the principle of least privilege.
+
+Q14: Under which Linux user account does Apache run its worker processes on Ubuntu?
+A: The `www-data` service account.
+
+Q15: What command is used to inspect the server's private IP address on modern Linux?
+A: `hostname -I` or `ip addr show`.
+
+14. 30–60 SECOND EXPLANATION FOR THE EXAMINER
+--------------------------------------------------------------------------------
+"In this experiment, I installed and configured the Apache2 HTTP web server on an Ubuntu Linux system. I enabled and verified the service using `systemctl`, confirmed it was actively listening on TCP Port 80, and configured UFW firewall rules to allow Apache traffic. I navigated to the default document root at `/var/www/html/` and replaced the default page with a custom department HTML page using `nano`. I verified client-server HTTP communication locally using `curl -I http://localhost` and a browser, and remotely from another machine across the LAN using the server's IP address (`http://192.168.1.10/`), confirming successful HTTP 200 responses in `/var/log/apache2/access.log`."
+
+15. QUICK REVISION POINTS
+--------------------------------------------------------------------------------
+- Package: `apache2` via `sudo apt install apache2`.
+- Service commands: `systemctl start|stop|restart|status|enable apache2`.
+- Document root: `/var/www/html/` (landing file: `index.html`).
+- Port: TCP 80 (HTTP), TCP 443 (HTTPS).
+- Firewall: `sudo ufw allow 'Apache'`.
+- Configuration test: `sudo apache2ctl configtest`.
+- Logs: `/var/log/apache2/access.log` and `error.log`.
+
+16. RESULT / CONCLUSION
+--------------------------------------------------------------------------------
+The Apache HTTP web server was successfully installed, configured, and secured on Ubuntu Linux. A custom webpage was hosted in the document root, and client-server HTTP communication was confirmed locally and across the local area network.
+TEST STATUS: Verified and documented according to standard Ubuntu Linux / Apache2 system administration standards.
+================================================================================

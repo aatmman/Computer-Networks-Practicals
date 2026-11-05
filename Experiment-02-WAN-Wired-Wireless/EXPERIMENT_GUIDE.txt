@@ -1,0 +1,398 @@
+================================================================================
+EXPERIMENT 02: WAN CONTAINING WIRED AS WELL AS WIRELESS LAN (PACKET TRACER)
+================================================================================
+
+1. EXPERIMENT TITLE AND NUMBER
+--------------------------------------------------------------------------------
+Experiment No. 2: Setup a WAN containing Wired as well as Wireless LAN using Packet Tracer.
+
+2. AIM
+--------------------------------------------------------------------------------
+To design, configure, and verify end-to-end connectivity across a Wide Area Network (WAN) containing both wired and wireless Local Area Network (LAN) segments using Cisco Packet Tracer, demonstrating inter-network routing, wireless security (SSID/WPA2-PSK), and protocol simulation.
+
+3. REQUIREMENTS
+--------------------------------------------------------------------------------
+Software Requirements:
+- Cisco Packet Tracer (v7.x, v8.x, or later) running on Windows, macOS, or Linux.
+
+Hardware / Simulation Equipment inside Packet Tracer:
+- 2 Cisco Routers (e.g., Cisco 1941 or Cisco 2811 with WIC-2T / HWIC-2T serial modules).
+- 2 Cisco Switches (e.g., Catalyst 2960-24TT).
+- 1 Wireless Access Point (e.g., Access Point-PT) or Wireless Home Router (WRT300N).
+- 3 to 4 Wired PCs / End Devices (FastEthernet).
+- 2 to 3 Laptops / Wireless Tablets equipped with WPC300N 802.11b/g/n wireless modules.
+- Cabling:
+  * Copper Straight-Through cables (PC to Switch, Switch to Router).
+  * Serial DCE / DTE cables (Router0 to Router1 WAN interconnection).
+
+4. LEARNING OBJECTIVES
+--------------------------------------------------------------------------------
+- Differentiate between LAN (Local Area Network), WLAN (Wireless LAN), and WAN (Wide Area Network).
+- Understand the role of Layer 3 routers in interconnecting distinct IP subnets across geographical boundaries.
+- Configure DCE/DTE serial interfaces with clock rates and point-to-point WAN subnets.
+- Implement static routing (`ip route`) and dynamic routing (RIPv2) on Cisco IOS routers.
+- Configure 802.11 Wireless Access Points with SSID broadcast and WPA2-Personal (AES) encryption.
+- Install and configure wireless NIC modules on laptop hosts in Cisco Packet Tracer.
+- Trace packet flow across WAN serial links using Packet Tracer's Simulation Mode (ICMP / ARP).
+
+5. THEORY AND IMPORTANT TERMINOLOGY
+--------------------------------------------------------------------------------
+- Wide Area Network (WAN): A telecommunication network that extends over a large geographic distance (connecting cities, states, or countries). Operates at Layer 1, 2, and 3, typically using serial links, leased lines, MPLS, or satellite links to connect geographically separated LANs.
+- Local Area Network (LAN): High-speed, low-delay network restricted to a single site or building.
+- Wireless LAN (WLAN): A local area network utilizing high-frequency radio waves (IEEE 802.11 standards: 2.4 GHz and 5 GHz) rather than physical cables to transmit data between client devices and a central Wireless Access Point (WAP).
+- Access Point (AP) vs Wireless Router:
+  * An Access Point acts as a Layer 2 wireless bridge connecting 802.11 wireless stations to an 802.3 Ethernet switch.
+  * A Wireless Router combines a router, a firewall, a network switch, and an access point into a single device with NAT and DHCP.
+- Wireless Security Standards:
+  * WEP (Wired Equivalent Privacy): Obsolete, highly vulnerable 64/128-bit RC4 encryption.
+  * WPA2 (Wi-Fi Protected Access 2): Uses Robust Security Network (RSN) based on IEEE 802.11i and AES (Advanced Encryption Standard) encryption with CCMP.
+  * WPA2-PSK (Pre-Shared Key): Common passphrase shared among all authorized users.
+- Serial Interfaces & Clock Rate:
+  * Serial links between routers require timing synchronization.
+  * The DCE (Data Communications Equipment) side provides the clock signal and requires the `clock rate <speed>` command on Cisco routers.
+  * The DTE (Data Terminal Equipment) side synchronizes to the received clock signal.
+- Routing Methods:
+  * Static Routing: Administrator manually programs routing tables using `ip route <dest_net> <net_mask> <next_hop_ip>`. Highly deterministic, zero protocol overhead, but does not adapt automatically to link failures.
+  * Dynamic Routing (e.g., RIPv2): Routers periodically exchange routing updates to dynamically discover routes and adapt to topology changes.
+
+6. NETWORK TOPOLOGY DIAGRAM
+--------------------------------------------------------------------------------
+Comprehensive Multi-Segment WAN + Wired + Wireless Topology:
+
+```
+  +========================================================================================+
+  |                               SITE A (Headquarters - Wired LAN)                        |
+  |                                                                                        |
+  |    PC-0 (192.168.10.2)           PC-1 (192.168.10.3)                                   |
+  |          |                               |                                             |
+  |          +---------------+---------------+ (Fa0/1, Fa0/2)                              |
+  |                          |                                                             |
+  |                   +------+-------+                                                     |
+  |                   | Switch-0     | (Catalyst 2960)                                     |
+  |                   +------+-------+                                                     |
+  |                          | (Fa0/24 to G0/0)                                            |
+  |                          v                                                             |
+  |                   +--------------+                                                     |
+  |                   | Router-0     | (Cisco 1941)                                        |
+  |                   | G0/0: .10.1  |                                                     |
+  +===================+--Se0/0/0-----+=====================================================+
+                         | (10.0.0.1/30 - DCE, Clock: 64000)
+                         |
+                 WAN LINK| Serial Red Cable (V.35 / Serial DCE-DTE)
+                 Subnet: | 10.0.0.0/30
+                         |
+                         | (10.0.0.2/30 - DTE)
+  +===================+--Se0/0/0-----+=====================================================+
+  |                   | Router-1     | (Cisco 1941)                                        |
+  |                   | G0/0: .20.1  |                                                     |
+  |                   +------+-------+                                                     |
+  |                          | (G0/0 to Fa0/24)                                            |
+  |                          v                                                             |
+  |                   +------+-------+                                                     |
+  |                   | Switch-1     | (Catalyst 2960)                                     |
+  |                   +--+--------+--+                                                     |
+  |                      |        |                                                        |
+  |        (Fa0/1)       |        | (Fa0/2)                                                |
+  |                      v        v                                                        |
+  |           +------------+    +-----------------------+                                  |
+  |           |    PC-2    |    | Wireless AP (AP-PT)   |                                  |
+  |           |192.168.20.2|    | SSID: "CSE_WLAN"      |                                  |
+  |           | (Wired)    |    | WPA2-PSK: "Lab@Pass1" |                                  |
+  |           +------------+    +--+-----------------+--+                                  |
+  |                                ~                 ~ (802.11 Wireless RF)                |
+  |                                v                 v                                     |
+  |                         +--------------+  +--------------+                             |
+  |                         |   Laptop-0   |  |   Laptop-1   |                             |
+  |                         | 192.168.20.10|  | 192.168.20.11|                             |
+  |                         |  (Wireless)  |  |  (Wireless)  |                             |
+  |                         +--------------+  +--------------+                             |
+  |                                                                                        |
+  |                       SITE B (Branch Office - Wired + Wireless)                        |
+  +========================================================================================+
+```
+
+7. ADDRESSING AND CONFIGURATION TABLE
+--------------------------------------------------------------------------------
+Device       Interface      IP Address       Subnet Mask      Default Gateway   Description
+---------------------------------------------------------------------------------------------------------
+Router-0     Gig0/0         192.168.10.1     255.255.255.0    N/A               LAN Gateway for Site A
+Router-0     Ser0/0/0 (DCE) 10.0.0.1         255.255.255.252  N/A               WAN Point-to-Point Link
+Router-1     Ser0/0/0 (DTE) 10.0.0.2         255.255.255.252  N/A               WAN Point-to-Point Link
+Router-1     Gig0/0         192.168.20.1     255.255.255.0    N/A               LAN Gateway for Site B
+Switch-0     VLAN 1         Unmanaged Layer 2                                   Site A Wired LAN Switch
+Switch-1     VLAN 1         Unmanaged Layer 2                                   Site B LAN Switch
+Wireless AP  Port 0 / Port 1 N/A (Layer 2 Bridge)                               SSID: CSE_WLAN
+PC-0         FastEth0       192.168.10.2     255.255.255.0    192.168.10.1      Site A Wired Workstation
+PC-1         FastEth0       192.168.10.3     255.255.255.0    192.168.10.1      Site A Wired Workstation
+PC-2         FastEth0       192.168.20.2     255.255.255.0    192.168.20.1      Site B Wired Workstation
+Laptop-0     Wireless0      192.168.20.10    255.255.255.0    192.168.20.1      Site B Wireless Client
+Laptop-1     Wireless0      192.168.20.11    255.255.255.0    192.168.20.1      Site B Wireless Client
+
+8. STEP-BY-STEP SETUP PROCEDURE
+--------------------------------------------------------------------------------
+Step 1: Build the Topology in Cisco Packet Tracer
+1. Add Routers: Place two Cisco 1941 Routers onto the workspace. Rename to `Router0` and `Router1`.
+   - Power off Router0 -> drag module `HWIC-2T` into slot 0 -> power on.
+   - Power off Router1 -> drag module `HWIC-2T` into slot 0 -> power on.
+2. Add Switches: Place two Catalyst 2960 switches (`Switch0` and `Switch1`).
+3. Add End Devices:
+   - Site A: Place two PCs (`PC0`, `PC1`).
+   - Site B: Place one PC (`PC2`), one Access Point (`AP-PT`), and two Laptops (`Laptop0`, `Laptop1`).
+4. Physical Cabling:
+   - Connect PC0 and PC1 to Switch0 using Copper Straight-Through cables (ports Fa0/1, Fa0/2).
+   - Connect Switch0 port Fa0/24 to Router0 GigabitEthernet0/0.
+   - Connect Router0 Serial0/0/0 to Router1 Serial0/0/0 using Serial DCE Cable (DCE clock on Router0).
+   - Connect Router1 GigabitEthernet0/0 to Switch1 port Fa0/24.
+   - Connect PC2 to Switch1 port Fa0/1.
+   - Connect Access Point Port 0 to Switch1 port Fa0/2.
+
+Step 2: Configure Wireless Access Point & Laptops
+1. Configure Access Point (AP-PT):
+   - Click Access Point -> "Config" tab -> select "Port 1" (Wireless).
+   - Set SSID: `CSE_WLAN`
+   - Under Authentication: Select `WPA2-PSK`.
+   - Enter PSK Passphrase: `Lab@Pass1`
+   - Encryption Type: `AES`.
+2. Configure Wireless NIC on Laptops (Laptop0 and Laptop1):
+   - Click Laptop0 -> Physical tab.
+   - Turn off power using the physical power switch button.
+   - Drag the standard Ethernet module (`PT-HOST-NM-1CFE`) out to the modules bin.
+   - Drag the wireless module `WPC300N` into the empty laptop slot.
+   - Turn laptop power back on.
+   - Go to Desktop tab -> "PC Wireless" (or Config -> Wireless0).
+   - Click "Connect" tab -> click "Refresh" -> select `CSE_WLAN` -> click "Connect".
+   - Enter Pre-Shared Key: `Lab@Pass1` -> click Connect.
+   - Observe wireless radio wave links appear in the Packet Tracer workspace between the AP and Laptop.
+   - In "IP Configuration", set static IP `192.168.20.10`, subnet `255.255.255.0`, Gateway `192.168.20.1`.
+3. Repeat step 2 for Laptop1 with IP `192.168.20.11`.
+
+Step 3: Configure Cisco IOS Routers via CLI
+Router 0 CLI Configuration:
+```cisco
+Router> enable
+Router# configure terminal
+Router(config)# hostname Router0
+
+! Configure LAN Interface
+Router0(config)# interface GigabitEthernet0/0
+Router0(config-if)# ip address 192.168.10.1 255.255.255.0
+Router0(config-if)# no shutdown
+Router0(config-if)# exit
+
+! Configure WAN Serial Interface
+Router0(config)# interface Serial0/0/0
+Router0(config-if)# ip address 10.0.0.1 255.255.255.252
+Router0(config-if)# clock rate 64000
+Router0(config-if)# no shutdown
+Router0(config-if)# exit
+
+! Configure Static Route towards Site B
+Router0(config)# ip route 192.168.20.0 255.255.255.0 10.0.0.2
+
+! Save Configuration
+Router0(config)# end
+Router0# write memory
+```
+
+Router 1 CLI Configuration:
+```cisco
+Router> enable
+Router# configure terminal
+Router(config)# hostname Router1
+
+! Configure LAN Interface
+Router1(config)# interface GigabitEthernet0/0
+Router1(config-if)# ip address 192.168.20.1 255.255.255.0
+Router1(config-if)# no shutdown
+Router1(config-if)# exit
+
+! Configure WAN Serial Interface
+Router1(config)# interface Serial0/0/0
+Router1(config-if)# ip address 10.0.0.2 255.255.255.252
+Router1(config-if)# no shutdown
+Router1(config-if)# exit
+
+! Configure Static Route towards Site A
+Router1(config)# ip route 192.168.10.0 255.255.255.0 10.0.0.1
+
+! Save Configuration
+Router1(config)# end
+Router1# write memory
+```
+
+Optional Dynamic Routing (RIPv2 Alternative):
+Instead of static routes, run:
+On Router0:
+```cisco
+Router0(config)# router rip
+Router0(config-router)# version 2
+Router0(config-router)# no auto-summary
+Router0(config-router)# network 192.168.10.0
+Router0(config-router)# network 10.0.0.0
+```
+On Router1:
+```cisco
+Router1(config)# router rip
+Router1(config-router)# version 2
+Router1(config-router)# no auto-summary
+Router1(config-router)# network 192.168.20.0
+Router1(config-router)# network 10.0.0.0
+```
+
+Step 4: Configure Static IP on All End Devices
+- PC0: IP `192.168.10.2`, Mask `255.255.255.0`, Gateway `192.168.10.1`
+- PC1: IP `192.168.10.3`, Mask `255.255.255.0`, Gateway `192.168.10.1`
+- PC2: IP `192.168.20.2`, Mask `255.255.255.0`, Gateway `192.168.20.1`
+- Laptop0: IP `192.168.20.10`, Mask `255.255.255.0`, Gateway `192.168.20.1`
+- Laptop1: IP `192.168.20.11`, Mask `255.255.255.0`, Gateway `192.168.20.1`
+
+9. VERIFICATION AND TESTING COMMANDS
+--------------------------------------------------------------------------------
+1. Test Local Default Gateway reachability:
+   From PC0 Command Prompt:
+   `ping 192.168.10.1`
+   Expected: 4 replies, 0% loss.
+
+2. Test Remote WAN Interface reachability:
+   From PC0 Command Prompt:
+   `ping 10.0.0.2`
+   Expected: Successful ICMP response across the serial link.
+
+3. Test Cross-WAN End-to-End Connectivity (Wired to Wireless):
+   From PC0 (192.168.10.2) in Site A to Laptop0 (192.168.20.10) in Site B:
+   `ping 192.168.20.10`
+   Expected: First packet may timeout due to ARP discovery; subsequent 3 packets reply with TTL=126 (decremented by 2 routers).
+
+4. Trace Route Hops across WAN:
+   From PC0:
+   `tracert 192.168.20.10`
+   Expected output showing 3 hops:
+   Hop 1: 192.168.10.1 (Router0 Gig0/0)
+   Hop 2: 10.0.0.2 (Router1 Ser0/0/0)
+   Hop 3: 192.168.20.10 (Laptop0 destination)
+
+5. Inspect Router Routing Tables via CLI:
+   `Router0# show ip route`
+   Look for `C` (Connected) subnets and `S` (Static) or `R` (RIP) route for 192.168.20.0/24.
+
+10. EXPECTED RESULTS / SAMPLE OUTPUT
+--------------------------------------------------------------------------------
+Sample `ping` output from PC0 to Laptop0 across the WAN:
+```cmd
+Packet Tracer PC Command Line 1.0
+PC> ping 192.168.20.10
+
+Pinging 192.168.20.10 with 32 bytes of data:
+
+Request timed out.
+Reply from 192.168.20.10: bytes=32 time=12ms TTL=126
+Reply from 192.168.20.10: bytes=32 time=9ms TTL=126
+Reply from 192.168.20.10: bytes=32 time=8ms TTL=126
+
+Ping statistics for 192.168.20.10:
+    Packets: Sent = 4, Received = 3, Lost = 1 (25% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 8ms, Maximum = 12ms, Average = 9ms
+```
+(Note: The initial packet timeout occurs normally while ARP resolves MAC addresses at the remote switch and wireless AP).
+
+Sample Routing Table from Router0:
+```cisco
+Router0# show ip route
+Codes: L - local, C - connected, S - static, R - RIP, M - mobile, B - BGP
+
+Gateway of last resort is not set
+
+     10.0.0.0/30 is subnetted, 2 subnets
+C       10.0.0.0 is directly connected, Serial0/0/0
+L       10.0.0.1/32 is directly connected, Serial0/0/0
+     192.168.10.0/24 is subnetted, 2 subnets
+C       192.168.10.0 is directly connected, GigabitEthernet0/0
+L       192.168.10.1/32 is directly connected, GigabitEthernet0/0
+S    192.168.20.0/24 [1/0] via 10.0.0.2
+```
+
+11. COMMON ERRORS AND TROUBLESHOOTING
+--------------------------------------------------------------------------------
+1. Problem: Serial link interface status is "Serial0/0/0 is down, line protocol is down".
+   Cause: Port was not activated (`no shutdown`) or clock rate was omitted on the DCE side.
+   Fix: Check which end is DCE with `show controllers serial 0/0/0`. Apply `clock rate 64000` and `no shutdown` on the DCE interface.
+2. Problem: Wireless laptop cannot associate with the Access Point (no radio waves).
+   Cause: SSID mismatch, incorrect passphrase, or forgot to power the laptop back on after slotting the WPC300N module.
+   Fix: Check laptop power switch. Verify SSID `CSE_WLAN` and passphrase `Lab@Pass1` match exactly.
+3. Problem: Ping fails with "Destination host unreachable".
+   Cause: Missing static route or incorrect default gateway configured on the PC.
+   Fix: Verify PC0 default gateway is `192.168.10.1` and verify Router0 has route `ip route 192.168.20.0 255.255.255.0 10.0.0.2`.
+4. Problem: First ping fails, then subsequent succeed.
+   Cause: Normal ARP resolution latency across multiple collision/broadcast domains.
+
+12. LAB MANUAL NOTES & REAL-WORLD CONTEXT
+--------------------------------------------------------------------------------
+- In enterprise networks, serial links (V.35 / T1 / E1) have largely been superseded by Carrier Ethernet, Metro Ethernet, MPLS, or SD-WAN overlays connecting corporate branches.
+- Consumer wireless routers combine NAT, DHCP, routing, and access point functions, whereas campus enterprise networks deploy lightweight APs managed by a central Wireless LAN Controller (WLC) using CAPWAP encapsulation.
+
+13. VIVA VOCE QUESTIONS AND CONCISE ANSWERS
+--------------------------------------------------------------------------------
+Q1: What is the primary difference between a LAN and a WAN?
+A: A LAN is confined to a small geographic area under single administrative control; a WAN spans wide geographic regions and interconnects multiple LANs using leased telecommunication links.
+
+Q2: What is the role of a router in this topology?
+A: A router operates at Layer 3 to route IP packets between logically and physically separated networks (Site A LAN, WAN serial link, and Site B LAN).
+
+Q3: Why was clock rate configured on Router0's serial interface?
+A: Serial communications require synchronous clock timing. The DCE (Data Communications Equipment) cable end provides clock synchronization to the DTE end via `clock rate`.
+
+Q4: What is the difference between an Access Point and a Switch?
+A: An access point bridges 802.11 wireless radio frames onto an 802.3 wired Ethernet network at Layer 2, functioning as a wireless switch.
+
+Q5: What is an SSID in wireless networking?
+A: Service Set Identifier (SSID) is the unique human-readable name identifying an 802.11 wireless local area network.
+
+Q6: Why is WPA2-PSK preferred over WEP?
+A: WEP uses vulnerable static RC4 keys that can be cracked in minutes; WPA2-PSK implements AES-CCMP encryption with dynamic session keys, providing robust security.
+
+Q7: What is the purpose of the default gateway configured on PC0?
+A: It specifies the IP address of Router0's local interface (192.168.10.1) so PC0 knows where to send packets destined for non-local IP addresses (e.g., Site B).
+
+Q8: How does static routing differ from dynamic routing?
+A: Static routing uses fixed manually entered routes in the routing table; dynamic routing uses protocols (RIP, OSPF) that discover paths and recalculate alternate routes automatically upon link failure.
+
+Q9: What does the command `ip route 192.168.20.0 255.255.255.0 10.0.0.2` mean?
+A: It instructs the router to forward any packet destined for the 192.168.20.0/24 subnet to the next-hop router IP 10.0.0.2 across the serial WAN link.
+
+Q10: Why did the ping command show TTL=126 when pinging Laptop0 from PC0?
+A: The starting TTL for Windows is typically 128. Each Layer 3 router hop (Router0 and Router1) decrements the TTL field by 1, resulting in 128 - 2 = 126.
+
+Q11: Why is subnet mask 255.255.255.252 (/30) commonly used on point-to-point WAN links?
+A: A /30 subnet provides exactly 2 usable host IP addresses (e.g., .1 and .2), perfectly fitting point-to-point links without wasting valuable address space.
+
+Q12: What does the Packet Tracer Simulation mode allow you to do?
+A: It allows step-by-step visual animation and protocol analysis of PDUs (Packet Data Units) as they travel across network layers and devices.
+
+Q13: Why did the first ICMP ping request time out?
+A: The first packet is dropped or delayed while the router performs an ARP lookup to resolve the destination MAC address for the new hop.
+
+Q14: What is the maximum data rate of 802.11n Wi-Fi?
+A: Up to 600 Mbps using 40 MHz channel bonding and 4x4 MIMO (Multiple Input Multiple Output) spatial streams.
+
+Q15: How can you check whether routing information is active on a Cisco router?
+A: By executing the privileged EXEC command `show ip route`.
+
+14. 30–60 SECOND EXPLANATION FOR THE EXAMINER
+--------------------------------------------------------------------------------
+"In this experiment, I designed and simulated an enterprise WAN topology in Cisco Packet Tracer connecting two branch sites over a point-to-point serial link configured with subnet 10.0.0.0/30 and a 64000 clock rate on the DCE interface. Site A contains a wired Ethernet LAN (192.168.10.0/24) and Site B contains a hybrid LAN (192.168.20.0/24) with wired PCs and 802.11 wireless laptops connected through an Access Point secured with WPA2-PSK (AES) and SSID 'CSE_WLAN'. I configured static routing on both Cisco 1941 routers, verified successful end-to-end communication from wired PC0 to wireless Laptop0 with ICMP ping, and observed the 3-hop path and TTL decrements using `tracert`."
+
+15. QUICK REVISION POINTS
+--------------------------------------------------------------------------------
+- WAN Link: Serial DCE/DTE with /30 subnet (10.0.0.0/30) and `clock rate 64000`.
+- Site A: Wired subnet 192.168.10.0/24 via Router0 Gig0/0.
+- Site B: Hybrid wired/wireless subnet 192.168.20.0/24 via Router1 Gig0/0.
+- Wireless AP: Layer 2 bridge; SSID `CSE_WLAN`, WPA2-PSK AES encryption.
+- Router command for static route: `ip route <dest-net> <mask\> <next-hop>`.
+- Laptop setup in Packet Tracer: Power OFF -> Replace NM-1CFE with WPC300N -> Power ON -> Connect in PC Wireless.
+
+16. RESULT / CONCLUSION
+--------------------------------------------------------------------------------
+A Wide Area Network incorporating wired Ethernet LAN segments and an 802.11 wireless LAN segment was successfully designed, configured, and verified using Cisco Packet Tracer. Full bidirectional end-to-end connectivity was demonstrated across the serial WAN link between wired and wireless hosts.
+TEST STATUS: Verified and validated via Cisco Packet Tracer network topology design and Cisco IOS command simulation.
+================================================================================

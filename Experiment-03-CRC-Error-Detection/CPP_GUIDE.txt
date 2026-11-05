@@ -1,0 +1,414 @@
+================================================================================
+EXPERIMENT 03: ERROR DETECTION AND CORRECTION FOR ASCII CODES USING CRC (C++)
+================================================================================
+
+1. EXPERIMENT TITLE AND NUMBER
+--------------------------------------------------------------------------------
+Experiment No. 3: Program for Error Detection and Correction for ASCII Codes using CRC.
+
+2. AIM
+--------------------------------------------------------------------------------
+To write and execute a complete C++ program that implements error detection for ASCII-coded messages using the Cyclic Redundancy Check (CRC) technique with polynomial (modulo-2) arithmetic, and demonstrates error detection through channel bit corruption and retransmission simulation.
+
+3. REQUIREMENTS
+--------------------------------------------------------------------------------
+- Software: Operating System (Linux, macOS Darwin, or Windows with MinGW/MSYS2/WSL).
+- Compiler: GCC / Clang C++ Compiler (`g++` or `clang++`) supporting C++11 or higher (C++17 recommended).
+- Tools: Terminal / Command Line, Text Editor (VS Code / Vim / Nano).
+- Hardware: Standard PC with minimum 1 GHz CPU, 512 MB RAM.
+
+4. LEARNING OBJECTIVES
+--------------------------------------------------------------------------------
+- Master the mathematical foundations of polynomial representation of binary data and modulo-2 (XOR) arithmetic.
+- Understand the role of the Generator Polynomial G(x) and Frame Check Sequence (FCS) in Data Link Layer error control.
+- Implement ASCII-to-binary 8-bit stream conversion.
+- Implement CRC checksum generation on the sender side and remainder verification on the receiver side.
+- Understand why CRC detects errors reliably (single-bit, double-bit, odd-parity, burst errors) but relies on Automatic Repeat reQuest (ARQ) for correction.
+
+5. THEORY AND IMPORTANT TERMINOLOGY
+--------------------------------------------------------------------------------
+- Cyclic Redundancy Check (CRC): A non-secure hash function designed to detect accidental changes to raw computer data in digital networks (Ethernet, Wi-Fi) and storage devices (Hard Drives, SSDs).
+- Modulo-2 Arithmetic: Binary arithmetic performed bit-by-bit without carries in addition and without borrows in subtraction. Both modulo-2 addition and subtraction are identical to the bitwise Exclusive-OR (XOR) operation:
+  * 0 XOR 0 = 0
+  * 0 XOR 1 = 1
+  * 1 XOR 0 = 1
+  * 1 XOR 1 = 0
+- Generator Polynomial G(x): A predefined divisor polynomial of degree r (length n = r + 1) agreed upon by both sender and receiver. Common standards include:
+  * CRC-8: x^8 + x^2 + x + 1 (100000111) - ATM headers
+  * CRC-16-CCITT: x^16 + x^12 + x^5 + 1 (10001000000100001) - X.25, HDLC, Bluetooth
+  * CRC-32: Used in IEEE 802.3 Ethernet and ZIP/PNG files.
+  * Educational/Simple: x^3 + x^2 + 1 (1101) - 4 bits, degree 3.
+- Frame Check Sequence (FCS) / Remainder: The r-bit remainder obtained after dividing the augmented data polynomial (Data followed by r zeros) by G(x).
+- Transmitted Codeword: Codeword T(x) = Data Bits + FCS Remainder.
+- Error Detection Capability:
+  * Detects all single-bit errors if G(x) has at least two non-zero terms (e.g. x^r and 1).
+  * Detects all double-bit errors if G(x) does not divide (x^k + 1).
+  * Detects all odd numbers of bit errors if G(x) contains (x + 1) as a factor.
+  * Detects all burst errors of length <= r bits.
+- Error Detection vs Correction:
+  * CRC is strictly an error-detecting code. It signals the presence of corruption via a non-zero remainder, but does not identify the exact corrupted bit positions for general bursts.
+  * Practical systems achieve error correction through ARQ (Automatic Repeat reQuest) protocols by discarding the corrupted frame and prompting the sender to retransmit it.
+
+6. WORKING PRINCIPLE / ALGORITHM
+--------------------------------------------------------------------------------
+Sender Side:
+1. Input ASCII message string M and generator polynomial string G of length n (degree r = n - 1).
+2. Convert each ASCII character of M into an 8-bit binary string: Data D.
+3. Append r = (n - 1) zero bits to D to create the augmented string D'.
+4. Perform modulo-2 division of D' by G:
+   - Align G with the leftmost '1' bit of the current dividend.
+   - Perform bitwise XOR between G and the corresponding bits of the dividend.
+   - Shift to the next '1' bit.
+   - Repeat until the remaining dividend length is less than n.
+5. The resulting (n - 1) bits form the CRC checksum (FCS).
+6. Construct the transmitted frame: Frame = Data D + CRC.
+
+Transmission Channel:
+1. Deliver Frame to receiver.
+2. Optionally simulate a single-bit or multi-bit error by inverting the bit at a designated index.
+
+Receiver Side:
+1. Receive incoming frame R.
+2. Perform modulo-2 division of R by the same generator G.
+3. Examine the resulting (n - 1) bit remainder:
+   - If remainder contains only '0's: Accept frame as uncorrupted; extract original data.
+   - If remainder contains any '1': Reject frame; error detected; request ARQ retransmission.
+
+7. FLOW DIAGRAM (ASCII)
+--------------------------------------------------------------------------------
+```
+  [ASCII Message: "Hi"]
+           |
+           v
+  [Convert to 8-bit Binary] --> D = 01001000 01101001
+           |
+           v
+  [Append (n-1) Zeros] -------> D' = 0100100001101001 000
+           |
+           v
+  [Modulo-2 Division by G] ---> Divisor G = 1101
+           |
+           v
+  [Extract (n-1) Remainder] --> CRC = 001
+           |
+           v
+  [Construct Codeword] -------> Frame = 0100100001101001 001
+           |
+           |================ [ Transmission Channel ] ================|
+           |                                                         |
+     (Clean Channel)                                      (Bit Flip Injected)
+           |                                                         |
+           v                                                         v
+   R = 0100100001101001001                                  R' = 0100110001101001001
+           |                                                         |
+           v                                                         v
+   [Modulo-2 Division by G]                                 [Modulo-2 Division by G]
+           |                                                         |
+           v                                                         v
+    Remainder = 000                                          Remainder = 110 (Non-zero)
+           |                                                         |
+           v                                                         v
+  [ACCEPTED: No Error]                                      [REJECTED: Error Detected]
+                                                            [Request Retransmission]
+```
+
+8. COMPLETE SOURCE CODE (C++)
+--------------------------------------------------------------------------------
+The source code below is saved in `Experiment-03-CRC-Error-Detection/cpp/crc.cpp`:
+
+```cpp
+#include <iostream>
+#include <string>
+#include <vector>
+
+using namespace std;
+
+// Perform modulo-2 (XOR) division and return the remainder string of length (n - 1)
+string mod2Divide(string dividend, const string &generator) {
+    int n = generator.size();
+    string rem = dividend;
+    for (int i = 0; i <= (int)dividend.size() - n; i++) {
+        if (rem[i] == '1') {
+            for (int j = 0; j < n; j++) {
+                rem[i + j] = (rem[i + j] == generator[j]) ? '0' : '1';
+            }
+        }
+    }
+    return rem.substr(rem.size() - (n - 1)); // last (n - 1) bits = remainder
+}
+
+// Convert an ASCII string into an 8-bit binary representation per character
+string asciiToBinary(const string &text) {
+    string bin = "";
+    for (unsigned char c : text) {
+        for (int i = 7; i >= 0; i--) {
+            bin += ((c >> i) & 1) ? '1' : '0';
+        }
+    }
+    return bin;
+}
+
+int main() {
+    cout << "========================================================\n";
+    cout << "  CYCLIC REDUNDANCY CHECK (CRC) ERROR DETECTION - C++  \n";
+    cout << "========================================================\n";
+
+    string message, generator;
+    cout << "Enter ASCII message: ";
+    getline(cin, message);
+
+    if (message.empty()) {
+        message = "Hi";
+        cout << "Empty message entered. Defaulting to: \"" << message << "\"\n";
+    }
+
+    cout << "Enter generator polynomial bits (e.g. 1101 or 10001000000100001): ";
+    cin >> generator;
+
+    // Validate generator polynomial
+    if (generator.size() < 2) {
+        cerr << "Error: Generator polynomial must have at least 2 bits.\n";
+        return 1;
+    }
+    for (char c : generator) {
+        if (c != '0' && c != '1') {
+            cerr << "Error: Generator must contain only binary digits (0 and 1).\n";
+            return 1;
+        }
+    }
+    if (generator.front() != '1' || generator.back() != '1') {
+        cout << "Note: Standard CRC generators usually begin and end with '1'.\n";
+    }
+
+    string data = asciiToBinary(message);
+    int n = generator.size();
+
+    // --- SENDER SIDE ---
+    // Append (n - 1) zero bits to the data
+    string augmented = data + string(n - 1, '0');
+    string crc = mod2Divide(augmented, generator);
+    string frame = data + crc; // Transmitted codeword
+
+    cout << "\n--- SENDER SIDE ---" << endl;
+    cout << "Original Message     : \"" << message << "\"" << endl;
+    cout << "Data Bits (" << data.size() << " bits) : " << data << endl;
+    cout << "Generator (" << n << " bits) : " << generator << endl;
+    cout << "Appended Zeros       : " << string(n - 1, '0') << endl;
+    cout << "Computed CRC (FCS)   : " << crc << endl;
+    cout << "Transmitted Frame    : " << frame << endl;
+
+    // --- CHANNEL TRANSMISSION / ERROR SIMULATION ---
+    char choice;
+    cout << "\n--- TRANSMISSION CHANNEL ---" << endl;
+    cout << "Simulate a transmission bit error? (y/n): ";
+    cin >> choice;
+
+    string received = frame;
+    if (choice == 'y' || choice == 'Y') {
+        int pos = -1;
+        cout << "Enter bit position to flip (0 to " << frame.size() - 1 << "): ";
+        cin >> pos;
+        if (pos >= 0 && pos < (int)frame.size()) {
+            char orig = received[pos];
+            received[pos] = (received[pos] == '0') ? '1' : '0';
+            cout << "Flipped bit at index " << pos << " from '" << orig << "' to '" << received[pos] << "'." << endl;
+            cout << "Corrupted Frame Received : " << received << endl;
+        } else {
+            cout << "Invalid index! Transmitting frame without error." << endl;
+        }
+    } else {
+        cout << "Transmitting frame over clean channel without errors." << endl;
+    }
+
+    // --- RECEIVER SIDE ---
+    cout << "\n--- RECEIVER SIDE ---" << endl;
+    string remainder = mod2Divide(received, generator);
+    bool hasError = remainder.find('1') != string::npos;
+
+    cout << "Received Frame          : " << received << endl;
+    cout << "Receiver Remainder      : " << remainder << endl;
+
+    if (hasError) {
+        cout << "Verification Status     : [REJECTED] Error detected in received frame!" << endl;
+        cout << "Action                  : Discard frame and request retransmission (ARQ)." << endl;
+    } else {
+        cout << "Verification Status     : [ACCEPTED] Remainder is all zeros. No error detected." << endl;
+        string receivedData = received.substr(0, data.size());
+        cout << "Extracted Data Bits     : " << receivedData << endl;
+    }
+
+    cout << "========================================================\n";
+    return 0;
+}
+```
+
+9. EXPLANATION OF THE CODE
+--------------------------------------------------------------------------------
+- `string mod2Divide(string dividend, const string &generator)`:
+  Performs polynomial division over GF(2). It steps through `dividend` up to `dividend.size() - n`. Whenever the current bit is `'1'`, it applies XOR with `generator` over the next `n` bits. At the end, the last `(n - 1)` bits represent the remainder.
+- `string asciiToBinary(const string &text)`:
+  Converts each character into its 8-bit binary representation using bit-shifting (`(c >> i) & 1`).
+- Augmented Dividend construction:
+  Appends `n - 1` zeros (`string(n - 1, '0')`) to the data string.
+- Frame construction:
+  The resulting `crc` remainder is concatenated directly to `data` to form the transmitted codeword `frame`.
+- Receiver Verification:
+  The receiver runs `mod2Divide(received, generator)`. If `remainder.find('1') == string::npos`, the remainder is entirely zero, confirming zero detected errors. Otherwise, an error is reported.
+
+10. SETUP AND INSTALLATION INSTRUCTIONS
+--------------------------------------------------------------------------------
+1. Prerequisites: Ensure GCC/Clang is installed:
+   - Ubuntu/Debian: `sudo apt install build-essential`
+   - macOS: `xcode-select --install`
+2. Navigate to the cpp folder:
+   `cd Experiment-03-CRC-Error-Detection/cpp`
+
+11. EXACT COMPILE/RUN COMMANDS
+--------------------------------------------------------------------------------
+Compile:
+`g++ -std=c++17 -Wall -Wextra crc.cpp -o crc`
+
+Run:
+`./crc`
+
+12. EXECUTION ORDER
+--------------------------------------------------------------------------------
+This is a standalone simulation executable combining sender, channel, and receiver stages in a single deterministic demonstration run:
+1. Launch `./crc`.
+2. Enter the message (e.g., `Hi`).
+3. Enter generator polynomial (e.g., `1101`).
+4. Choose whether to simulate bit corruption (`y` or `n`).
+5. Observe the computed FCS, channel output, receiver remainder, and status decision.
+
+13. SAMPLE INPUT AND EXPECTED OUTPUT
+--------------------------------------------------------------------------------
+Case A: Clean Channel (No Error)
+Input:
+```
+Enter ASCII message: Hi
+Enter generator polynomial bits: 1101
+Simulate a transmission bit error? (y/n): n
+```
+Output:
+```
+--- SENDER SIDE ---
+Original Message     : "Hi"
+Data Bits (16 bits) : 0100100001101001
+Generator (4 bits) : 1101
+Appended Zeros       : 000
+Computed CRC (FCS)   : 001
+Transmitted Frame    : 0100100001101001001
+
+--- TRANSMISSION CHANNEL ---
+Transmitting frame over clean channel without errors.
+
+--- RECEIVER SIDE ---
+Received Frame          : 0100100001101001001
+Receiver Remainder      : 000
+Verification Status     : [ACCEPTED] Remainder is all zeros. No error detected.
+Extracted Data Bits     : 0100100001101001
+```
+
+Case B: Transmission Error Simulated
+Input:
+```
+Enter ASCII message: Hi
+Enter generator polynomial bits: 1101
+Simulate a transmission bit error? (y/n): y
+Enter bit position to flip: 5
+```
+Output:
+```
+Flipped bit at index 5 from '0' to '1'.
+Corrupted Frame Received : 0100110001101001001
+
+--- RECEIVER SIDE ---
+Received Frame          : 0100110001101001001
+Receiver Remainder      : 110
+Verification Status     : [REJECTED] Error detected in received frame!
+Action                  : Discard frame and request retransmission (ARQ).
+```
+
+14. HOW TO TEST AND VERIFY THE RESULT
+--------------------------------------------------------------------------------
+- Manual Mathematical Verification:
+  Take data `0100100001101001`, append `000`. Divide manually by `1101` using XOR long division. The remainder must be `001`.
+  Verify that dividing `0100100001101001001` by `1101` yields remainder `000`.
+- Automated Verification:
+  Run test script piping inputs directly: `printf "Hi\n1101\nn\n" | ./crc`.
+
+15. COMMON ERRORS AND TROUBLESHOOTING
+--------------------------------------------------------------------------------
+1. Generator polynomial length: If generator length is 4, appended zeros must be 3 (`n - 1`), not 4.
+2. Character indexing: Ensure 0-based bit position is within `0` to `frame.size() - 1`.
+3. Input buffer leftover newline: Using `cin >> generator` followed by `cin >> choice` can read a stray newline if not handled properly.
+
+16. MANUAL CODE NOTE / CORRECTION / ENHANCEMENT
+--------------------------------------------------------------------------------
+- Clarification on Title: The manual title reads "Error Detection and Correction for ASCII Codes using CRC". CRC is strictly an *error detection* code; it mathematically identifies corruption but cannot locate which bits flipped to restore original values. Real-world systems achieve error *correction* via ARQ (retransmission) or by using Hamming/BCH/Reed-Solomon codes.
+- Added input validation for binary digits (0 and 1) in the generator polynomial.
+
+17. VIVA QUESTIONS WITH CONCISE, CORRECT ANSWERS
+--------------------------------------------------------------------------------
+Q1: What does CRC stand for?
+A: Cyclic Redundancy Check.
+
+Q2: Why is CRC preferred over a simple checksum or parity check?
+A: Parity only detects odd numbers of bit errors and misses even bit flips. CRC uses polynomial division to detect burst errors, double errors, and odd-bit errors with mathematical certainty.
+
+Q3: What operation replaces subtraction in polynomial modulo-2 arithmetic?
+A: Bitwise Exclusive-OR (XOR) operation.
+
+Q4: If the generator polynomial has degree r (length n), how many zero bits are appended to the data?
+A: Exactly r = (n - 1) zero bits.
+
+Q5: What is the Frame Check Sequence (FCS)?
+A: The (n - 1) bit remainder resulting from modulo-2 division of the augmented data by the generator.
+
+Q6: How does the receiver determine if a frame has arrived corrupted?
+A: By dividing the received frame by the identical generator polynomial; a non-zero remainder indicates corruption.
+
+Q7: Can CRC correct detected bit errors on its own?
+A: No. CRC detects the presence of errors; correction is performed via ARQ retransmission.
+
+Q8: What is a burst error?
+A: An error pattern where two or more consecutive bits in the received bit sequence are altered.
+
+Q9: What types of burst errors can a CRC of degree r detect with 100% certainty?
+A: Any burst error of length up to and including r bits.
+
+Q10: What generator polynomial is used by IEEE 802.3 Ethernet?
+A: CRC-32 (degree 32), with polynomial 0x04C11DB7.
+
+Q11: Why must the leading and trailing coefficients of standard generator polynomials be 1?
+A: A leading 1 ensures division starts at the most significant bit, and a trailing 1 ensures divisibility cannot miss shifted errors.
+
+Q12: What is the relationship between the codeword T(x), data D(x), and remainder R(x)?
+A: T(x) = D(x) * 2^r + R(x).
+
+Q13: At which OSI layer does CRC typically operate?
+A: The Data Link Layer (Layer 2), embedded inside the Ethernet frame trailer.
+
+Q14: How does CRC handle ASCII data in this program?
+A: Each ASCII character is converted to its 8-bit binary representation before polynomial division.
+
+Q15: What happens if an error corrupts the CRC bits themselves during transit?
+A: The division at the receiver still yields a non-zero remainder, correctly rejecting the frame.
+
+18. 30–60 SECOND EXPLANATION FOR THE EXAMINER
+--------------------------------------------------------------------------------
+"In this experiment, I implemented Cyclic Redundancy Check (CRC) error detection in C++. The program converts an input ASCII string into an 8-bit binary stream, appends n-1 zero bits based on an n-bit generator polynomial, and calculates the remainder using modulo-2 XOR division. This remainder is appended to the message to form the transmitted frame. On the receiving side, dividing the received frame by the generator yields a remainder of all zeros for an uncorrupted frame, while any flipped bit produces a non-zero remainder, triggering frame rejection and requesting ARQ retransmission."
+
+19. QUICK REVISION POINTS
+--------------------------------------------------------------------------------
+- Arithmetic: Modulo-2 arithmetic uses XOR (no carry, no borrow).
+- Appended bits: Degree of generator r = length of generator minus 1.
+- Sender: Frame = Data + Remainder.
+- Receiver: Remainder == 0 -> Accepted; Remainder != 0 -> Rejected (Error detected).
+- Role: Error detection only; error correction handled by retransmission (ARQ).
+
+20. RESULT / CONCLUSION
+--------------------------------------------------------------------------------
+The C++ CRC error detection program was successfully implemented, compiled, and tested. The program accurately verified error-free frames with an all-zero remainder and reliably caught corrupted bit patterns.
+TEST STATUS: Tested successfully on macOS (Apple clang C++17, arm64).
+================================================================================

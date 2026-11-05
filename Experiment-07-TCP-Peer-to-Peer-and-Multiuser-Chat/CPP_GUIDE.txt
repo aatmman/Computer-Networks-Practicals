@@ -1,0 +1,658 @@
+================================================================================
+EXPERIMENT 07: TCP PEER-TO-PEER AND MULTIUSER CHAT (C++)
+================================================================================
+
+1. EXPERIMENT TITLE AND NUMBER
+--------------------------------------------------------------------------------
+Experiment No. 7: Program using TCP Sockets for Wired Network: Peer to Peer Chat and Multiuser Chat.
+
+2. AIM
+--------------------------------------------------------------------------------
+To design, write, compile, and execute complete multithreaded C++ socket programs using TCP (`SOCK_STREAM`) that implement:
+  (a) A bidirectional Peer-to-Peer (P2P) full-duplex chat application between two endpoints, and
+  (b) A centralized Multiuser chat server with concurrent client thread handling and message broadcasting across all active clients.
+
+3. REQUIREMENTS
+--------------------------------------------------------------------------------
+- Software: Linux, macOS Darwin, or Windows with POSIX and pthread support.
+- Compiler: GCC / Clang C++ Compiler (`g++` or `clang++`) supporting C++11 or higher (C++17 recommended) with `-pthread` flag.
+- Networking API: Standard POSIX Sockets (`<sys/socket.h>`, `<netinet/in.h>`, `<arpa/inet.h>`, `<unistd.h>`).
+- Concurrency: Standard C++ Threads (`<thread>`, `<mutex>`, `<atomic>`).
+- Ports Allocated:
+  * P2P Chat: Port 9200 (configurable)
+  * Multiuser Chat: Port 9201 (configurable)
+- Tools: Three or more terminal windows to simulate multiple simultaneous chat clients.
+
+4. LEARNING OBJECTIVES
+--------------------------------------------------------------------------------
+- Master full-duplex communication over stream sockets using independent sender and receiver execution threads.
+- Implement a centralized star-topology Multiuser chat server using multithreaded connection dispatching.
+- Synchronize access to shared data structures (the active client socket vector) using mutual exclusion locks (`std::mutex` and `std::lock_guard`).
+- Implement message broadcasting logic that forwards incoming text from any client to all other connected peers while excluding the original sender.
+- Manage graceful client disconnection, thread termination, and socket cleanup without deadlocks or resource leaks.
+
+5. THEORY AND IMPORTANT TERMINOLOGY
+--------------------------------------------------------------------------------
+- Peer-to-Peer (P2P) Architecture: Both participating nodes possess symmetric capabilities. One node acts as the listening endpoint to bootstrap the connection, after which both peers transmit and receive messages independently over the full-duplex TCP stream.
+- Multiuser (Client-Server Broadcast) Architecture: A centralized server maintains a registry of all active client socket connections. When client A transmits a message, the server acts as an application-layer relay, iterating through the registry and retransmitting the message to clients B, C, and D.
+- Concurrency & Threading:
+  * A single thread cannot simultaneously block in `cin` (waiting for local user typing) and block in `recv()` (waiting for incoming network messages).
+  * Solution: Decouple I/O by spawning a dedicated background receiver thread for `recv()`, while the main thread handles keyboard input and `send()`.
+- Thread Safety & Mutex: When multiple client threads simultaneously join, send messages, or disconnect, they access the shared `std::vector<int> clients`. A `std::mutex` guarantees that only one thread can modify or read the list at any given instant, preventing race conditions.
+- Port Reusability: Using `setsockopt(..., SO_REUSEADDR, ...)` allows immediate restarting of the server without lingering `TIME_WAIT` port conflicts.
+
+6. WORKING PRINCIPLE / ALGORITHM
+--------------------------------------------------------------------------------
+Part (a) - P2P Chat:
+1. One peer runs in `server` mode: creates socket, binds to Port 9200, calls `listen(1)`, and waits in `accept()`.
+2. Second peer runs in `client` mode: connects to the server peer's IP on Port 9200.
+3. Once connected, both peers spawn a dedicated receiver thread running `receiveLoop(connFd)`.
+4. The main thread runs a loop reading keyboard input via `getline(cin, msg)` and transmits it via `send()`.
+5. When a user types `exit`, the socket is closed, the receiver thread terminates, and the chat ends.
+
+Part (b) - Multiuser Chat:
+1. Server binds to Port 9201, calls `listen(10)`.
+2. Main server loop repeatedly calls `accept()`.
+3. For each accepted client:
+   - Server spawns a new thread executing `handleClient(clientFd)`.
+   - Thread requests client username, registers client in the global `clients` vector under `clientsMutex` lock, and broadcasts a join notice.
+4. Client Message Loop:
+   - Client thread continuously reads messages from `clientFd`.
+   - For every incoming message, server broadcasts `[Username]: Message` to all other connected clients (`client.fd != clientFd`).
+5. Disconnection:
+   - If client disconnects or types `exit`, `recv()` returns <= 0.
+   - Server removes client from vector under mutex lock, broadcasts departure notice, and closes `clientFd`.
+
+7. NETWORK TOPOLOGY DIAGRAM
+--------------------------------------------------------------------------------
+Multiuser Star Topology with Central Broadcast Server:
+
+```
+                  +--------------------------------+
+                  |  Multiuser Chat Server (9201)  |
+                  |  - clientsMutex                |
+                  |  - vector<ConnectedClient>     |
+                  +--+-----------+-----------+-----+
+                     |           |           |
+            TCP Conn |  TCP Conn |  TCP Conn |
+                     v           v           v
+             +----------+  +----------+  +----------+
+             | Client 1 |  | Client 2 |  | Client 3 |
+             |  "Alice" |  |   "Bob"  |  | "Charlie"|
+             +----------+  +----------+  +----------+
+
+Broadcast Flow:
+Alice sends: "Hello all" ---> Server receives from Alice
+                              Server loops through vector
+                              Server sends to Bob: "[Alice]: Hello all"
+                              Server sends to Charlie: "[Alice]: Hello all"
+                              (Excluded: Alice herself)
+```
+
+8. COMPLETE SOURCE CODE (C++)
+--------------------------------------------------------------------------------
+All source files are located in `Experiment-07-TCP-Peer-to-Peer-and-Multiuser-Chat/cpp/`:
+
+--- File 1: p2p_chat.cpp ---
+```cpp
+#include <iostream>
+#include <string>
+#include <cstring>
+#include <thread>
+#include <atomic>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+using namespace std;
+
+atomic<bool> running(true);
+
+void receiveLoop(int sockFd) {
+    char buffer[1024];
+    while (running) {
+        ssize_t n = recv(sockFd, buffer, sizeof(buffer) - 1, 0);
+        if (n <= 0) {
+            if (running) {
+                cout << "\n[Notice] Peer disconnected. Press Enter to exit." << endl;
+                running = false;
+            }
+            break;
+        }
+        buffer[n] = '\0';
+        cout << "\r[Peer]: " << buffer << "\n[You]: " << flush;
+    }
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        cout << "Usage:\n";
+        cout << "  Listen mode  : ./p2p_chat server [port]\n";
+        cout << "  Connect mode : ./p2p_chat client [peer_ip] [port]\n";
+        cout << "Default port is 9200.\n";
+        return 1;
+    }
+
+    string mode = argv[1];
+    int port = 9200;
+    string peerIP = "127.0.0.1";
+    int connFd = -1;
+
+    cout << "========================================================\n";
+    cout << "        TCP PEER-TO-PEER (P2P) CHAT - C++               \n";
+    cout << "========================================================\n";
+
+    if (mode == "server") {
+        if (argc > 2) port = atoi(argv[2]);
+
+        int listenFd = socket(AF_INET, SOCK_STREAM, 0);
+        if (listenFd < 0) {
+            perror("Socket creation failed");
+            return 1;
+        }
+
+        int opt = 1;
+        setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+        sockaddr_in serverAddr{};
+        serverAddr.sin_family = AF_INET;
+        serverAddr.sin_addr.s_addr = INADDR_ANY;
+        serverAddr.sin_port = htons(port);
+
+        if (::bind(listenFd, (sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+            perror("Bind failed");
+            close(listenFd);
+            return 1;
+        }
+
+        if (listen(listenFd, 1) < 0) {
+            perror("Listen failed");
+            close(listenFd);
+            return 1;
+        }
+
+        cout << "Listening on port " << port << "... Waiting for peer to connect.\n";
+        sockaddr_in clientAddr{};
+        socklen_t clientLen = sizeof(clientAddr);
+        connFd = accept(listenFd, (sockaddr*)&clientAddr, &clientLen);
+        if (connFd < 0) {
+            perror("Accept failed");
+            close(listenFd);
+            return 1;
+        }
+
+        char clientIP[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, sizeof(clientIP));
+        cout << "Peer connected from " << clientIP << ":" << ntohs(clientAddr.sin_port) << endl;
+        close(listenFd); // Original listen socket can be closed in P2P
+
+    } else if (mode == "client") {
+        if (argc > 2) peerIP = argv[2];
+        if (argc > 3) port = atoi(argv[3]);
+
+        connFd = socket(AF_INET, SOCK_STREAM, 0);
+        if (connFd < 0) {
+            perror("Socket creation failed");
+            return 1;
+        }
+
+        sockaddr_in peerAddr{};
+        peerAddr.sin_family = AF_INET;
+        peerAddr.sin_port = htons(port);
+        if (inet_pton(AF_INET, peerIP.c_str(), &peerAddr.sin_addr) <= 0) {
+            cerr << "Invalid peer IP address: " << peerIP << endl;
+            close(connFd);
+            return 1;
+        }
+
+        cout << "Connecting to peer at " << peerIP << ":" << port << "...\n";
+        if (connect(connFd, (sockaddr*)&peerAddr, sizeof(peerAddr)) < 0) {
+            perror("Connection failed");
+            close(connFd);
+            return 1;
+        }
+        cout << "Connected to peer successfully!\n";
+    } else {
+        cerr << "Unknown mode: " << mode << " (use 'server' or 'client')\n";
+        return 1;
+    }
+
+    cout << "Chat session active. Type messages and press Enter. Type 'exit' to quit.\n";
+
+    thread receiver(receiveLoop, connFd);
+
+    string msg;
+    while (running) {
+        cout << "[You]: " << flush;
+        if (!getline(cin, msg)) break;
+        if (msg == "exit") {
+            running = false;
+            break;
+        }
+        if (!msg.empty() && running) {
+            if (send(connFd, msg.c_str(), msg.size(), 0) < 0) {
+                perror("Send failed");
+                break;
+            }
+        }
+    }
+
+    running = false;
+    close(connFd);
+    if (receiver.joinable()) {
+        receiver.join();
+    }
+
+    cout << "Chat ended.\n";
+    return 0;
+}
+```
+
+--- File 2: multiuser_chat_server.cpp ---
+```cpp
+#include <iostream>
+#include <string>
+#include <cstring>
+#include <vector>
+#include <thread>
+#include <mutex>
+#include <algorithm>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+using namespace std;
+
+const int PORT = 9201;
+
+struct ConnectedClient {
+    int fd;
+    string name;
+    string ip;
+    int port;
+};
+
+vector<ConnectedClient> clients;
+mutex clientsMutex;
+
+void broadcast(const string &msg, int excludeFd) {
+    lock_guard<mutex> lock(clientsMutex);
+    for (const auto &client : clients) {
+        if (client.fd != excludeFd) {
+            send(client.fd, msg.c_str(), msg.size(), 0);
+        }
+    }
+}
+
+void handleClient(int clientFd, string clientIP, int clientPort) {
+    char buffer[1024];
+
+    // Prompt client for display name
+    string prompt = "Enter your username: ";
+    send(clientFd, prompt.c_str(), prompt.size(), 0);
+
+    ssize_t n = recv(clientFd, buffer, sizeof(buffer) - 1, 0);
+    if (n <= 0) {
+        close(clientFd);
+        return;
+    }
+    buffer[n] = '\0';
+    string username(buffer);
+    // Trim newline or spaces
+    while (!username.empty() && (username.back() == '\r' || username.back() == '\n' || username.back() == ' ')) {
+        username.pop_back();
+    }
+    if (username.empty()) username = "Client" + to_string(clientFd);
+
+    {
+        lock_guard<mutex> lock(clientsMutex);
+        clients.push_back({clientFd, username, clientIP, clientPort});
+    }
+
+    string joinMsg = "[Server Notice]: " + username + " joined the chat.";
+    cout << joinMsg << " (" << clientIP << ":" << clientPort << ")" << endl;
+    broadcast(joinMsg, clientFd);
+
+    string welcome = "[Server]: Welcome " + username + "! Type messages and press Enter. Type 'exit' to leave.\n";
+    send(clientFd, welcome.c_str(), welcome.size(), 0);
+
+    while (true) {
+        n = recv(clientFd, buffer, sizeof(buffer) - 1, 0);
+        if (n <= 0) break;
+        buffer[n] = '\0';
+
+        string msg(buffer);
+        while (!msg.empty() && (msg.back() == '\r' || msg.back() == '\n')) {
+            msg.pop_back();
+        }
+        if (msg == "exit") break;
+
+        cout << "[" << username << "]: " << msg << endl;
+        string broadcastMsg = "[" + username + "]: " + msg;
+        broadcast(broadcastMsg, clientFd);
+    }
+
+    // Client disconnection cleanup
+    {
+        lock_guard<mutex> lock(clientsMutex);
+        clients.erase(
+            remove_if(clients.begin(), clients.end(),
+                      [clientFd](const ConnectedClient &c) { return c.fd == clientFd; }),
+            clients.end());
+    }
+
+    string leaveMsg = "[Server Notice]: " + username + " has left the chat.";
+    cout << leaveMsg << endl;
+    broadcast(leaveMsg, -1);
+
+    close(clientFd);
+}
+
+int main(int argc, char* argv[]) {
+    int port = PORT;
+    if (argc > 1) {
+        port = atoi(argv[1]);
+    }
+
+    int serverFd = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverFd < 0) {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    int opt = 1;
+    setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    sockaddr_in serverAddr{};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(port);
+
+    if (::bind(serverFd, (sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+        perror("Bind failed");
+        close(serverFd);
+        return 1;
+    }
+
+    if (listen(serverFd, 10) < 0) {
+        perror("Listen failed");
+        close(serverFd);
+        return 1;
+    }
+
+    cout << "========================================================\n";
+    cout << "  TCP MULTIUSER CHAT SERVER LISTENING ON PORT " << port << "\n";
+    cout << "========================================================\n";
+    cout << "Waiting for clients to join...\n";
+
+    while (true) {
+        sockaddr_in clientAddr{};
+        socklen_t clientLen = sizeof(clientAddr);
+        int clientFd = accept(serverFd, (sockaddr*)&clientAddr, &clientLen);
+        if (clientFd < 0) {
+            perror("Accept error");
+            continue;
+        }
+
+        char clientIP[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, sizeof(clientIP));
+        int clientPort = ntohs(clientAddr.sin_port);
+
+        thread clientThread(handleClient, clientFd, string(clientIP), clientPort);
+        clientThread.detach();
+    }
+
+    close(serverFd);
+    return 0;
+}
+```
+
+--- File 3: multiuser_chat_client.cpp ---
+```cpp
+#include <iostream>
+#include <string>
+#include <cstring>
+#include <thread>
+#include <atomic>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+using namespace std;
+
+const int PORT = 9201;
+atomic<bool> running(true);
+
+void receiveLoop(int sockFd) {
+    char buffer[1024];
+    while (running) {
+        ssize_t n = recv(sockFd, buffer, sizeof(buffer) - 1, 0);
+        if (n <= 0) {
+            if (running) {
+                cout << "\n[Notice] Disconnected from multiuser server. Press Enter to exit." << endl;
+                running = false;
+            }
+            break;
+        }
+        buffer[n] = '\0';
+        cout << "\r" << buffer << "\n[You]: " << flush;
+    }
+}
+
+int main(int argc, char* argv[]) {
+    string serverIP = "127.0.0.1";
+    int port = PORT;
+
+    if (argc > 1) {
+        serverIP = argv[1];
+    }
+    if (argc > 2) {
+        port = atoi(argv[2]);
+    }
+
+    int sockFd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockFd < 0) {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    sockaddr_in serverAddr{};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port);
+    if (inet_pton(AF_INET, serverIP.c_str(), &serverAddr.sin_addr) <= 0) {
+        cerr << "Invalid server IP address: " << serverIP << endl;
+        close(sockFd);
+        return 1;
+    }
+
+    cout << "Connecting to Multiuser Chat Server at " << serverIP << ":" << port << "..." << endl;
+    if (connect(sockFd, (sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+        perror("Connection to server failed");
+        close(sockFd);
+        return 1;
+    }
+
+    // Read username prompt from server
+    char promptBuffer[256] = {0};
+    recv(sockFd, promptBuffer, sizeof(promptBuffer) - 1, 0);
+    cout << promptBuffer << flush;
+
+    string username;
+    getline(cin, username);
+    if (username.empty()) username = "Anonymous";
+    send(sockFd, username.c_str(), username.size(), 0);
+
+    thread receiver(receiveLoop, sockFd);
+
+    string msg;
+    while (running) {
+        if (!getline(cin, msg)) break;
+        if (msg == "exit") {
+            send(sockFd, "exit", 4, 0);
+            running = false;
+            break;
+        }
+        if (!msg.empty() && running) {
+            if (send(sockFd, msg.c_str(), msg.size(), 0) < 0) {
+                perror("Send failed");
+                break;
+            }
+        }
+    }
+
+    running = false;
+    close(sockFd);
+    if (receiver.joinable()) {
+        receiver.detach();
+    }
+
+    cout << "You have left the chat.\n";
+    return 0;
+}
+```
+
+9. EXPLANATION OF THE CODE
+--------------------------------------------------------------------------------
+- Multithreading (`std::thread`): Solves the blocking I/O problem. In both P2P and Multiuser clients, `receiveLoop` runs in a separate thread so messages received from other peers are displayed immediately without waiting for the local user to press Enter.
+- Mutex Synchronization: In `multiuser_chat_server.cpp`, `lock_guard<mutex> lock(clientsMutex)` guards `clients.push_back()` and `clients.erase()`. When broadcasting, it iterates over the list safely without data corruption from concurrent client additions or removals.
+- Dynamic Username Registration: The multiuser server prompts each connecting client for a username, facilitating clear attribution of chat messages.
+- Atomic Flag: `atomic<bool> running(true)` ensures safe shutdown coordination between the main input thread and the background receiver thread.
+
+10. SETUP AND INSTALLATION INSTRUCTIONS
+--------------------------------------------------------------------------------
+1. Navigate to cpp folder:
+   `cd Experiment-07-TCP-Peer-to-Peer-and-Multiuser-Chat/cpp`
+2. Ensure compiler supports threads: `g++ -pthread`.
+
+11. EXACT COMPILE/RUN COMMANDS
+--------------------------------------------------------------------------------
+Compile:
+`g++ -std=c++17 -Wall -Wextra -pthread p2p_chat.cpp -o p2p_chat`
+`g++ -std=c++17 -Wall -Wextra -pthread multiuser_chat_server.cpp -o multiuser_chat_server`
+`g++ -std=c++17 -Wall -Wextra -pthread multiuser_chat_client.cpp -o multiuser_chat_client`
+
+12. EXECUTION ORDER
+--------------------------------------------------------------------------------
+Part A - Peer-to-Peer Chat:
+1. Terminal 1 (Peer A - Listening):
+   `./p2p_chat server 9200`
+2. Terminal 2 (Peer B - Connecting):
+   `./p2p_chat client 127.0.0.1 9200`
+3. Type messages alternately in either terminal; type `exit` to disconnect.
+
+Part B - Multiuser Chat:
+1. Terminal 1 (Server):
+   `./multiuser_chat_server 9201`
+2. Terminal 2 (Client 1 - Alice):
+   `./multiuser_chat_client 127.0.0.1 9201` -> Enter username: `Alice`
+3. Terminal 3 (Client 2 - Bob):
+   `./multiuser_chat_client 127.0.0.1 9201` -> Enter username: `Bob`
+4. Terminal 4 (Client 3 - Charlie):
+   `./multiuser_chat_client 127.0.0.1 9201` -> Enter username: `Charlie`
+5. Type messages from any client terminal; observe real-time broadcasts to all other client terminals.
+
+13. SAMPLE INPUT AND EXPECTED OUTPUT
+--------------------------------------------------------------------------------
+Multiuser Server Terminal:
+```
+TCP MULTIUSER CHAT SERVER LISTENING ON PORT 9201
+Waiting for clients to join...
+[Server Notice]: Alice joined the chat. (127.0.0.1:49810)
+[Server Notice]: Bob joined the chat. (127.0.0.1:49811)
+[Alice]: Hi everyone!
+[Bob]: Hey Alice, welcome to the chat!
+[Server Notice]: Alice has left the chat.
+```
+
+Client Terminal 2 (Bob):
+```
+Connecting to Multiuser Chat Server at 127.0.0.1:9201...
+Enter your username: Bob
+[Server]: Welcome Bob! Type messages and press Enter. Type 'exit' to leave.
+[Server Notice]: Alice joined the chat.
+[Alice]: Hi everyone!
+[You]: Hey Alice, welcome to the chat!
+```
+
+14. HOW TO TEST AND VERIFY THE RESULT
+--------------------------------------------------------------------------------
+- Test concurrent message interleaving: Start 3 clients, send messages simultaneously from two terminals. Confirm both messages appear on the third terminal without truncation.
+- Test graceful departure: Type `exit` on Alice's terminal. Verify that Bob and Charlie receive `[Server Notice]: Alice has left the chat.` and the server continues running stably.
+
+15. COMMON ERRORS AND TROUBLESHOOTING
+--------------------------------------------------------------------------------
+1. `fatal error: pthread.h`: Missing `-pthread` compile flag. Always compile with `g++ -pthread`.
+2. Garbled prompt strings: Overlapping `[You]:` and received messages occur because standard console `cin`/`cout` shares stdout. Using `\r` helps re-align the cursor.
+
+16. MANUAL CODE NOTE / CORRECTION / ENHANCEMENT
+--------------------------------------------------------------------------------
+- Enhanced Client Identifiers: The manual's minimal sample simply broadcasted raw socket file descriptors (`[Client 4]: Hello`). Our implementation requests a user-friendly handle/name (`[Alice]: Hello`), logs client IP/port, and broadcasts join/leave status events.
+- Atomic Flag Coordination: Introduced `atomic<bool> running` to cleanly terminate background receiver threads upon socket closure.
+
+17. VIVA QUESTIONS WITH CONCISE, CORRECT ANSWERS
+--------------------------------------------------------------------------------
+Q1: Why is multithreading necessary in a chat client?
+A: Because reading user input (`getline`) and receiving network data (`recv`) are both blocking calls; running them on separate threads enables simultaneous two-way communication.
+
+Q2: What is the architectural difference between P2P and Client-Server chat?
+A: In P2P, two nodes communicate directly; in Client-Server, all clients connect to a central hub that relays and broadcasts messages.
+
+Q3: Why is a mutex required in the multiuser chat server?
+A: To prevent race conditions when multiple client threads access or modify the shared list of active socket descriptors simultaneously.
+
+Q4: What does `thread::detach()` do?
+A: It separates the thread of execution from the thread object, allowing execution to continue independently in the background and releasing resources automatically upon completion.
+
+Q5: What is the purpose of `atomic<bool>`?
+A: It provides thread-safe access to a boolean variable without requiring an explicit mutex lock.
+
+Q6: In the broadcast function, why is `excludeFd` used?
+A: To prevent echoing the sender's own message back to their own terminal.
+
+Q7: What happens when a TCP client closes its terminal window without typing 'exit'?
+A: The server's `recv()` call returns 0 (or -1 with ECONNRESET), prompting the server to remove the client from the active list and close the descriptor.
+
+Q8: What is an alternative to per-client threading for handling multiple connections in C++?
+A: I/O Multiplexing using `select()`, `poll()`, or `epoll()` (Linux) / `kqueue()` (macOS).
+
+Q9: What is message framing in TCP chat applications?
+A: Because TCP is a continuous byte stream, delimiting messages with tokens (such as newline `\n` or length prefixes) ensures messages are not glued together.
+
+Q10: What does `INADDR_ANY` signify?
+A: It binds the server socket to listen on all available network interface addresses (localhost, Ethernet, Wi-Fi).
+
+Q11: How many clients can a multithreaded server support?
+A: Limited by operating system thread stack memory and file descriptor limits (typically several hundred to thousands before event-driven models become necessary).
+
+Q12: What does `lock_guard<mutex>` do in C++?
+A: It automatically acquires the mutex upon creation and safely releases it when exiting the scope, preventing deadlocks.
+
+Q13: What is full-duplex communication?
+A: Data can be transmitted and received simultaneously in both directions over the same connection.
+
+Q14: How does TCP handle packet loss in chat messages?
+A: TCP retransmits lost segments automatically and delivers them in sequential order; the chat application does not need to handle loss recovery.
+
+Q15: Why is `SO_REUSEADDR` beneficial for the multiuser chat server?
+A: It allows the server process to restart immediately on the same port without being blocked by lingering sockets in the `TIME_WAIT` state.
+
+18. 30–60 SECOND EXPLANATION FOR THE EXAMINER
+--------------------------------------------------------------------------------
+"In this experiment, I implemented full-duplex TCP chat applications in C++: Peer-to-Peer on Port 9200 and Multiuser on Port 9201. Because network reception and keyboard entry both block execution, I used multithreading to decouple I/O: a background thread executes `recv()` in a loop while the main thread captures typed input and calls `send()`. In the multiuser server, an `accept()` loop spawns a dedicated worker thread for each connecting client. Access to the shared client vector is synchronized using `std::mutex` and `std::lock_guard`. When any client sends a message, the server broadcasts it to all other connected peers, handling join, chat, and departure events seamlessly."
+
+19. QUICK REVISION POINTS
+--------------------------------------------------------------------------------
+- Architecture: P2P (direct 2-node) vs Multiuser (central server star topology).
+- Concurrency: Background `recv()` thread + Main `send()` thread.
+- Multiuser server: Dedicated thread per client connection; `std::mutex` protects client vector.
+- Broadcast: Iterate client vector, forwarding message to all except the sender.
+- Disconnection: `recv() <= 0` signals client departure; clean up and broadcast exit notice.
+
+20. RESULT / CONCLUSION
+--------------------------------------------------------------------------------
+The C++ TCP Peer-to-Peer and Multiuser chat systems were successfully developed, compiled, and verified. Simultaneous bidirectional communication and multi-client broadcasting were demonstrated across multiple terminal sessions.
+TEST STATUS: Tested successfully on macOS (Apple clang C++17, arm64).
+================================================================================
